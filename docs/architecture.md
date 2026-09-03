@@ -35,7 +35,7 @@ OSRM fournit les routes lorsque l’appel externe réussit; OSMnx/NetworkX et OR
 
 ## Migrations
 
-La migration additive est `migrations/001_workflows.sql`. Elle conserve les données existantes et ajoute une table `schema_migrations`. Exécution : `python migrate_schema.py`. La réversion est fournie dans `migrations/001_workflows.down.sql` et doit être utilisée uniquement après sauvegarde explicite.
+Les migrations additives sont `migrations/001_workflows.sql` et `migrations/002_collector_operations.sql`. Elles conservent les données existantes et sont suivies par `schema_migrations`. Exécution : `python migrate_schema.py`. Les réversions correspondantes doivent être utilisées uniquement après sauvegarde explicite.
 
 ## Matrice de maturité
 
@@ -47,8 +47,8 @@ La migration additive est `migrations/001_workflows.sql`. Elle conserve les donn
 | Seuil IA 80 % et panne du modèle | implémentée et testée |
 | Migration des workflows | implémentée mais non exécutée ici sur une base réelle |
 | Abonnements domestiques et statut | implémentés dans l’API et non encore reliés aux écrans |
-| Occurrences/calendrier automatique | partiellement implémenté |
-| Réclamations/support | implémentés dans l’API et non encore reliés aux écrans |
-| Carte moderne et suivi GPS sécurisé | partiellement implémentés |
-| Notifications persistantes | non implémentées |
+| Occurrences/calendrier automatique | implémenté et testé au niveau du générateur; planification périodique absente |
+| Réclamations/support | implémentés dans l’API et non encore reliés à tous les écrans |
+| Carte moderne et suivi GPS sécurisé | partiellement implémentés; carte d’intervention complète restante |
+| Notifications persistantes | implémentées dans l’API et testées au niveau du service |
 | Tests d’intégration avec PostgreSQL/OSRM | non implémentés |
