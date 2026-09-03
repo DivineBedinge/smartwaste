@@ -28,6 +28,7 @@
     <div id="info">En attente...</div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="/static/dom-security.js"></script>
     <script>
         let map = L.map('map').setView([4.05, 9.70], 12);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OSM' }).addTo(map);
@@ -100,7 +101,7 @@
                 const marker = L.circleMarker([p.lat, p.lon], {
                     radius: 12, color: color, fillOpacity: 0.8
                 });
-                marker.bindPopup(`<strong>Point ${idx+1}</strong><br>Type : ${p.waste_type}<br>Statut : ${p.status}`);
+                marker.bindPopup(safeHtml`<strong>Point ${idx+1}</strong><br>Type : ${p.waste_type}<br>Statut : ${p.status}`);
                 marker.addTo(map);
             });
 

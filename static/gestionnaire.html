@@ -7,6 +7,7 @@
 
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="/static/dom-security.js"></script>
     <script>
         // Configuration Tailwind pour le mode sombre
         tailwind.config = {
@@ -847,14 +848,15 @@
             const data = await resp.json();
             const signalements = Array.isArray(data) ? data : (data.signalements || []);
             const container = document.getElementById('recentSignalements');
-            container.innerHTML = '';
+            container.replaceChildren();
             signalements.slice(0, 5).forEach(s => {
                 const div = document.createElement('div');
                 div.className = 'px-5 py-4 flex items-center gap-3';
                 const badgeSeverity = s.severity === 'critique' ? 'bg-red-100 text-red-700' : s.severity === 'moderee' ? 'bg-orange-100 text-orange-700' : s.severity === 'faible' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700';
                 const badgeStatus = s.status === 'soumis' ? 'bg-blue-100 text-blue-700' : s.status === 'valide' ? 'bg-green-100 text-green-700' : s.status === 'en_cours' ? 'bg-orange-100 text-orange-700' : s.status === 'traite' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-700';
-                const imgHtml = s.photo_base64 ? `<img src="data:image/jpeg;base64,${s.photo_base64}" class="w-10 h-10 rounded-lg object-cover" onclick="window.open(this.src,'_blank')">` : '';
-                div.innerHTML = `
+                const imageUrl = safeImageDataUrl(`data:image/jpeg;base64,${s.photo_base64 || ''}`);
+                const imgHtml = imageUrl ? safeHtml`<img src="${imageUrl}" class="w-10 h-10 rounded-lg object-cover" alt="Photo du signalement">` : '';
+                div.innerHTML = safeHtml`
                     ${imgHtml}
                     <span class="font-mono text-sm text-gray-600 w-12">#${s.id}</span>
                     <span class="flex-1 text-sm font-medium">${s.waste_type || 'N/A'}</span>
@@ -897,8 +899,7 @@
                     });
                 }
                 const couleur = s0.severity === 'critique' ? '#dc2626' : s0.severity === 'moderee' ? '#f59e0b' : s0.severity === 'faible' ? '#059669' : '#6b7280';
-                let popupContent = `<strong>Signalement #${s0.id}</strong><br>${s0.waste_type || 'N/A'} (${s0.severity})<br>${s0.status}<br>Quartier: ${s0.arrondissement || 'Détection...'}`;
-                if (s0.photo_base64) popupContent += `<br><img src="data:image/jpeg;base64,${s0.photo_base64}" style="width:100px;height:100px;object-fit:cover;border-radius:8px;margin-top:5px" onclick="window.open(this.src,'_blank')">`;
+                let popupContent = safeHtml`<strong>Signalement #${s0.id}</strong><br>${s0.waste_type || 'N/A'} (${s0.severity})<br>${s0.status}<br>Quartier: ${s0.arrondissement || 'Détection...'}`;
                 const marker = L.circleMarker([s0.lat, s0.lon], { radius: 10, color: couleur, fillOpacity: 0.7 });
                 marker.bindPopup(popupContent);
                 marker.addTo(map);
@@ -910,15 +911,16 @@
         // ====== SIGNALEMENTS - LISTE + PAGINATION ======
         function renderSignalementsList(data, containerId, start, end) {
             const container = document.getElementById(containerId);
-            container.innerHTML = '';
+            container.replaceChildren();
             data.slice(start, end).forEach(s => {
                 const div = document.createElement('div');
                 div.className = 'px-5 py-4 flex flex-wrap items-center gap-3 border-b border-gray-100';
                 const badgeSeverity = s.severity === 'critique' ? 'bg-red-100 text-red-700' : s.severity === 'moderee' ? 'bg-orange-100 text-orange-700' : s.severity === 'faible' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700';
                 const badgeStatus = s.status === 'soumis' ? 'bg-blue-100 text-blue-700' : s.status === 'valide' ? 'bg-green-100 text-green-700' : s.status === 'en_cours' ? 'bg-orange-100 text-orange-700' : s.status === 'traite' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-700';
-                const imgHtml = s.photo_base64 ? `<img src="data:image/jpeg;base64,${s.photo_base64}" class="w-12 h-12 rounded-lg object-cover" onclick="window.open(this.src,'_blank')">` : '';
+                const imageUrl = safeImageDataUrl(`data:image/jpeg;base64,${s.photo_base64 || ''}`);
+                const imgHtml = imageUrl ? safeHtml`<img src="${imageUrl}" class="w-12 h-12 rounded-lg object-cover" alt="Photo du signalement">` : '';
                 const quartier = s.arrondissement || 'Détection...';
-                div.innerHTML = `
+                div.innerHTML = safeHtml`
                     ${imgHtml}
                     <span class="font-mono text-sm text-gray-600 w-12">#${s.id}</span>
                     <span class="flex-1 text-sm font-medium">${s.waste_type || 'N/A'}</span>
@@ -949,7 +951,7 @@
         function renderPagination(total, currentPage, containerId, callback) {
             const totalPages = Math.ceil(total / itemsPerPage);
             const container = document.getElementById(containerId);
-            container.innerHTML = '';
+            container.replaceChildren();
             if (totalPages <= 1) return;
             const prev = document.createElement('button');
             prev.textContent = '◀ ' + t('previous');
@@ -1004,11 +1006,11 @@
             const data = await resp.json();
             const tournees = Array.isArray(data) ? data : (data.tournees || []);
             const container = document.getElementById('tourneesList');
-            container.innerHTML = '';
+            container.replaceChildren();
             tournees.forEach(t => {
                 const card = document.createElement('div');
                 card.className = 'bg-white rounded-xl p-5 shadow-sm border border-gray-100 card-hover sw-fade-in';
-                card.innerHTML = `
+                card.innerHTML = safeHtml`
                     <div class="flex items-center justify-between">
                         <div class="flex items-center gap-3">
                             <div class="bg-emerald-100 rounded-xl p-2"><i data-lucide="truck" class="w-5 h-5 text-emerald-600"></i></div>
@@ -1090,11 +1092,11 @@
             const data = await resp.json();
             const agents = Array.isArray(data) ? data : (data.users || []);
             const container = document.getElementById('agentsList');
-            container.innerHTML = '';
+            container.replaceChildren();
             agents.forEach(a => {
                 const card = document.createElement('div');
                 card.className = 'bg-white rounded-xl p-5 shadow-sm border border-gray-100 card-hover sw-fade-in';
-                card.innerHTML = `
+                card.innerHTML = safeHtml`
                     <div class="flex items-center gap-3">
                         <div class="bg-emerald-100 rounded-full h-10 w-10 flex items-center justify-center text-emerald-700 font-semibold">${a.email[0]}</div>
                         <div>
@@ -1132,8 +1134,8 @@
             const data = await resp.json();
             const prix = Array.isArray(data) ? data : data.prix;
             const container = document.getElementById('prixList');
-            if (!prix || prix.length === 0) { container.innerHTML = '<p>' + t('no_price') + '</p>'; return; }
-            container.innerHTML = prix.map(p => `
+            if (!prix || prix.length === 0) { const empty = document.createElement('p'); empty.textContent = t('no_price'); container.replaceChildren(empty); return; }
+            container.innerHTML = prix.map(p => safeHtml`
                 <div class="flex items-center justify-between py-3 border-b border-gray-100">
                     <span class="font-medium">${p.type_dechet}</span>
                     <span class="text-sm text-gray-500">${p.ville || 'Douala'}</span>
@@ -1156,8 +1158,8 @@
             const data = await resp.json();
             const points = Array.isArray(data) ? data : data.points;
             const container = document.getElementById('pointsList');
-            if (!points || points.length === 0) { container.innerHTML = '<p>' + t('no_point') + '</p>'; return; }
-            container.innerHTML = points.map(p => `
+            if (!points || points.length === 0) { const empty = document.createElement('p'); empty.textContent = t('no_point'); container.replaceChildren(empty); return; }
+            container.innerHTML = points.map(p => safeHtml`
                 <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100 card-hover">
                     <div class="flex items-center justify-between">
                         <div>
@@ -1200,11 +1202,11 @@
             const data = await resp.json();
             lastGroupesData = Array.isArray(data) ? data : (data.groupes || []);
             const container = document.getElementById('groupesList');
-            container.innerHTML = '';
+            container.replaceChildren();
             lastGroupesData.slice(0, 10).forEach(g => {
                 const div = document.createElement('div');
                 div.className = 'py-3 border-b border-gray-100 flex justify-between items-center';
-                div.innerHTML = `
+                div.innerHTML = safeHtml`
                     <span class="text-sm font-medium">${t('group')} #${g.duplicate_group_id || 'null'}</span>
                     <span class="text-sm text-gray-500">${g.nb_signalements} ${t('signalements')}</span>
                     <span class="text-xs px-2 py-1 rounded-full ${g.severity === 'critique' ? 'bg-red-100 text-red-700' : 'bg-gray-100'}">${g.severity || 'N/A'}</span>
@@ -1231,7 +1233,7 @@
             }).addTo(map);
             currentRoutingControl.on('routesfound', function(e) {
                 const summary = e.routes[0].summary;
-                document.getElementById('routeInfo').innerHTML = `
+                document.getElementById('routeInfo').innerHTML = safeHtml`
                     <div class="font-medium text-sm">🚚 ${t('route')}</div>
                     <div class="text-xs text-gray-600">${t('distance')}: ${(summary.totalDistance/1000).toFixed(1)} km</div>
                     <div class="text-xs text-gray-600">${t('time')}: ${Math.round(summary.totalTime/60)} min</div>

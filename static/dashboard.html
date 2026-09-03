@@ -208,6 +208,7 @@
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
+    <script src="/static/dom-security.js"></script>
     <script>
         // Initialiser la carte centrée sur Douala
         const map = L.map('map').setView([4.0511, 9.7069], 12);
@@ -270,7 +271,7 @@
                         fillOpacity: 0.8
                     });
 
-                    marker.bindPopup(`
+                    marker.bindPopup(safeHtml`
                         <strong>Signalement #${id}</strong><br>
                         Sévérité : ${severity}<br>
                         Confiance : ${(confidence * 100).toFixed(1)}%
@@ -303,7 +304,7 @@
                         fillOpacity: 0.4
                     });
 
-                    clusterMarker.bindPopup(`
+                    clusterMarker.bindPopup(safeHtml`
                         <strong>Cluster #${cluster.cluster_id}</strong><br>
                         Signalements : ${cluster.nb_signalements}<br>
                         Confiance moyenne : ${(cluster.confiance_moyenne * 100).toFixed(1)}%
@@ -330,10 +331,10 @@
                 document.getElementById('total-hors-sujets').textContent = horsSujets.length;
 
                 const container = document.getElementById('hors-sujets-list');
-                container.innerHTML = '';
+                container.replaceChildren();
 
                 if (horsSujets.length === 0) {
-                    container.innerHTML = '<p style="color:#6b7280">Aucun hors sujet en attente</p>';
+                    const empty = document.createElement('p'); empty.style.color = '#6b7280'; empty.textContent = 'Aucun hors sujet en attente'; container.appendChild(empty);
                     return;
                 }
 
@@ -342,27 +343,23 @@
                     card.className = 'hors-sujet-card';
                     card.id = `hors-sujet-${signalement.id}`;
 
-                    let imageHtml = '';
-                    if (signalement.photo_base64 && signalement.photo_base64.length > 100) {
-                        imageHtml = `
-                            <img src="data:image/jpeg;base64,${signalement.photo_base64}" 
-                                 alt="Signalement ${signalement.id}"
-                                 style="width:100%;max-height:150px;object-fit:cover;border-radius:5px;margin:8px 0;cursor:pointer"
-                                 onclick="window.open(this.src, '_blank')">
-                        `;
+                    let imageHtml;
+                    const imageUrl = safeImageDataUrl(`data:image/jpeg;base64,${signalement.photo_base64 || ''}`);
+                    if (imageUrl) {
+                        imageHtml = safeHtml`<img src="${imageUrl}" alt="Signalement ${Number(signalement.id)}" style="width:100%;max-height:150px;object-fit:cover;border-radius:5px;margin:8px 0">`;
                     } else {
-                        imageHtml = '<div class="no-photo">📷 Pas de photo disponible</div>';
+                        imageHtml = safeHtml`<div class="no-photo">📷 Pas de photo disponible</div>`;
                     }
 
-                    card.innerHTML = `
+                    card.innerHTML = safeHtml`
                         <strong>#${signalement.id}</strong> 
                         <span style="color:#6b7280">(${(signalement.confidence * 100).toFixed(1)}%)</span>
                         ${imageHtml}
                         <div class="actions">
-                            <button class="btn-faible" onclick="reclasser(${signalement.id}, 'faible')">Faible</button>
-                            <button class="btn-moderee" onclick="reclasser(${signalement.id}, 'moderee')">Modérée</button>
-                            <button class="btn-critique" onclick="reclasser(${signalement.id}, 'critique')">Critique</button>
-                            <button class="btn-rejeter" onclick="rejeter(${signalement.id})">Rejeter</button>
+                            <button class="btn-faible" onclick="reclasser(${Number(signalement.id)}, 'faible')">Faible</button>
+                            <button class="btn-moderee" onclick="reclasser(${Number(signalement.id)}, 'moderee')">Modérée</button>
+                            <button class="btn-critique" onclick="reclasser(${Number(signalement.id)}, 'critique')">Critique</button>
+                            <button class="btn-rejeter" onclick="rejeter(${Number(signalement.id)})">Rejeter</button>
                         </div>
                     `;
 

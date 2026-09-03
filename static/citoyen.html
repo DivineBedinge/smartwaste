@@ -308,6 +308,7 @@
     <script src="/static/i18n.js"></script>
 
     <!-- Main Script -->
+    <script src="/static/dom-security.js"></script>
     <script>
         lucide.createIcons();
 
@@ -640,7 +641,7 @@
 
         function renderFilterTabs() {
             const container = document.getElementById('filterTabs');
-            container.innerHTML = '';
+            container.replaceChildren();
             const statuses = ['tous', 'soumis', 'valide', 'en_cours', 'traite'];
             statuses.forEach(status => {
                 const btn = document.createElement('button');
@@ -662,20 +663,21 @@
 
         function renderSignalements(statusFilter = 'tous') {
             const container = document.getElementById('mesSignalementsList');
-            container.innerHTML = '';
+            container.replaceChildren();
             const query = document.getElementById('searchInput').value.toLowerCase().trim();
             let filtered = allReports;
             if (statusFilter !== 'tous') filtered = filtered.filter(r => r.status === statusFilter);
             if (query) filtered = filtered.filter(r => (r.waste_type || '').toLowerCase().includes(query) || (r.arrondissement || '').toLowerCase().includes(query));
             if (filtered.length === 0) {
-                container.innerHTML = '<p class="text-gray-500 text-center py-10">Aucun signalement trouvé.</p>';
+                const empty = document.createElement('p'); empty.className = 'text-gray-500 text-center py-10'; empty.textContent = 'Aucun signalement trouvé.'; container.appendChild(empty);
                 return;
             }
             filtered.forEach(s => {
                 const item = document.createElement('div');
                 item.className = 'bg-white rounded-xl p-4 shadow-sm border border-gray-100';
                 const statutColor = s.status === 'soumis' ? 'bg-blue-100 text-blue-700' : s.status === 'valide' ? 'bg-green-100 text-green-700' : s.status === 'en_cours' ? 'bg-orange-100 text-orange-700' : s.status === 'traite' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-700';
-                const imgHtml = s.photo_base64 ? `<img src="data:image/jpeg;base64,${s.photo_base64}" class="w-full h-40 object-cover rounded-lg mb-3" onclick="window.open(this.src,'_blank')">` : '';
+                const imageUrl = safeImageDataUrl(`data:image/jpeg;base64,${s.photo_base64 || ''}`);
+                const imgHtml = imageUrl ? safeHtml`<img src="${imageUrl}" class="w-full h-40 object-cover rounded-lg mb-3" alt="Photo du signalement">` : '';
                 // Quartier (arrondissement) - si absent, on le remplit via reverseGeocode
                 let quartier = s.arrondissement || 'Détection...';
                 if (!s.arrondissement && s.lat && s.lon) {
@@ -686,7 +688,7 @@
                         if (quartierSpan) quartierSpan.textContent = q;
                     });
                 }
-                item.innerHTML = `
+                item.innerHTML = safeHtml`
                     ${imgHtml}
                     <div class="flex justify-between items-start">
                         <div>
@@ -698,7 +700,7 @@
                     <p class="text-sm mt-2">${s.waste_type || 'Type inconnu'}</p>
                     <p class="text-xs mt-1 text-gray-500">📍 <span class="quartier-text">${quartier}</span></p>
                     ${s.agent_lat ? `<p class="text-xs text-gray-500 mt-1">🚚 Agent en position</p>` : ''}
-                    <button onclick="voirDetailSignalement(${s.id})" class="mt-3 w-full bg-gray-100 py-2 rounded-lg text-xs font-medium">Voir détails</button>
+                    <button onclick="voirDetailSignalement(${Number(s.id)})" class="mt-3 w-full bg-gray-100 py-2 rounded-lg text-xs font-medium">Voir détails</button>
                 `;
                 container.appendChild(item);
             });
@@ -727,10 +729,10 @@
                 if (!quartier && data.lat && data.lon) {
                     quartier = await reverseGeocode(data.lat, data.lon);
                 }
-                modal.innerHTML = `
+                modal.innerHTML = safeHtml`
                     <div class="bg-white rounded-xl p-5 shadow-xl max-w-sm w-full">
                         <h3 class="font-bold">Signalement #${id}</h3>
-                        ${photoBase64 ? `<img src="data:image/jpeg;base64,${photoBase64}" class="w-full h-48 object-cover rounded-lg mt-3" onclick="window.open(this.src,'_blank')" />` : ''}
+                        ${safeImageDataUrl(`data:image/jpeg;base64,${photoBase64}`) ? safeHtml`<img src="${safeImageDataUrl(`data:image/jpeg;base64,${photoBase64}`)}" class="w-full h-48 object-cover rounded-lg mt-3" alt="Photo du signalement">` : ''}
                         <p class="text-sm mt-3">Statut : ${data.status}</p>
                         <p class="text-sm">Type : ${data.waste_type || 'Inconnu'}</p>
                         <p class="text-sm">Quartier : ${quartier}</p>
@@ -750,7 +752,7 @@
                         mapDetail.fitBounds(bounds, { padding: [30, 30] });
                     }
                 } else {
-                    document.getElementById('mapDetail').innerHTML = '<p class="text-sm text-gray-500">Position de l\'agent non disponible.</p>';
+                    const unavailable = document.createElement('p'); unavailable.className = 'text-sm text-gray-500'; unavailable.textContent = "Position de l'agent non disponible."; document.getElementById('mapDetail').replaceChildren(unavailable);
                 }
             } catch (e) { console.error(e); }
             finally { hideLoader(); }
@@ -795,8 +797,10 @@
             const userMsg = document.createElement('div');
             userMsg.className = 'message-bubble message-user';
             if (chatImage) {
-                userMsg.innerHTML = `<img src="${chatImage}" class="message-image" alt="Image envoyée" />`;
-                if (message) userMsg.innerHTML += `<p>${message}</p>`;
+                const preview = document.createElement('img');
+                const previewUrl = safeImageDataUrl(chatImage);
+                if (previewUrl) { preview.src = previewUrl; preview.className = 'message-image'; preview.alt = 'Image envoyée'; userMsg.appendChild(preview); }
+                if (message) { const paragraph = document.createElement('p'); paragraph.textContent = message; userMsg.appendChild(paragraph); }
             } else {
                 userMsg.textContent = message;
             }
@@ -900,7 +904,7 @@
                 });
                 points.forEach(p => {
                     L.marker([p.lat, p.lon])
-                        .bindPopup(`<strong>${p.nom}</strong><br>${p.type_activite || 'Point de collecte'}`)
+                        .bindPopup(safeHtml`<strong>${p.nom}</strong><br>${p.type_activite || 'Point de collecte'}`)
                         .addTo(map);
                 });
             } catch (e) { console.log('Impossible de charger les points', e); }
@@ -918,7 +922,7 @@
                 if (data.points_proches && data.points_proches.length > 0) {
                     data.points_proches.slice(0, 5).forEach(p => {
                         L.marker([p.lat, p.lon])
-                            .bindPopup(`<strong>${p.nom}</strong><br>${p.arrondissement}<br>${p.distance_km} km`)
+                            .bindPopup(safeHtml`<strong>${p.nom}</strong><br>${p.arrondissement}<br>${p.distance_km} km`)
                             .addTo(map);
                     });
                 } else {

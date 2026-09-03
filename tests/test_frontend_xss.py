@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,3 +30,17 @@ def test_manager_toast_uses_text_content():
     manager = (ROOT / "static" / "gestionnaire.html").read_text(encoding="utf-8")
     assert "label.textContent = String(message)" in manager
     assert "toast.innerHTML" not in manager
+
+
+def test_dynamic_html_sinks_are_tagged_and_urls_are_validated():
+    security = (ROOT / "static" / "dom-security.js").read_text(encoding="utf-8")
+    combined = "\n".join((ROOT / "static" / name).read_text(encoding="utf-8") for name in (
+        "citoyen.html", "gestionnaire.html", "dashboard.html", "agent.html",
+        "agent_map.html", "gestionnaire_map.html",
+    ))
+    assert "javascript:" not in combined.lower()
+    assert "safeImageDataUrl" in combined
+    assert "replaceAll('<', '&lt;')" in security
+    assert "allowed.has(url.protocol)" in security
+    assert not re.search(r"innerHTML\s*=\s*`[^`]*\$\{", combined, re.DOTALL)
+    assert not re.search(r"bindPopup\s*\(\s*`[^`]*\$\{", combined, re.DOTALL)
