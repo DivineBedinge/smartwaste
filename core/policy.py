@@ -20,6 +20,7 @@ PUBLIC_REPORT_STATES = {
     "soumis",
     "en_analyse",
     "a_verifier",
+    "en_attente_validation",
     "classifie",
     "valide",
     "rejete",
@@ -34,9 +35,10 @@ PUBLIC_REPORT_STATES = {
 }
 
 REPORT_TRANSITIONS = {
-    "soumis": {"en_analyse", "a_verifier", "classifie", "rejete", "hors_sujet"},
+    "soumis": {"en_analyse", "a_verifier", "classifie", "en_attente_validation", "rejete", "hors_sujet"},
     "en_analyse": {"a_verifier", "classifie", "rejete", "hors_sujet"},
-    "a_verifier": {"classifie", "valide", "rejete", "hors_sujet"},
+    "a_verifier": {"classifie", "en_attente_validation", "valide", "rejete", "hors_sujet"},
+    "en_attente_validation": {"classifie", "valide", "rejete", "hors_sujet"},
     "classifie": {"valide", "rejete", "hors_sujet"},
     "valide": {"assigne", "en_cours", "rejete"},
     "assigne": {"en_route", "en_cours", "reouvert"},

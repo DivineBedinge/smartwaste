@@ -428,7 +428,10 @@ async def create_signalement(
     except Exception:
         severity, confidence = None, None
         severity_decision = decide_severity(None, None, model_error=True)
-    type_dechet, _ = predict_type(image_bytes)
+    try:
+        type_dechet, _ = predict_type(image_bytes)
+    except Exception:
+        type_dechet = "trash"
 
     status = severity_decision.status
 
