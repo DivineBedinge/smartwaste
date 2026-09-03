@@ -549,7 +549,7 @@
         // ====== WEBSOCKET ======
         function connectWebSocket() {
             if (!token) return;
-            const ws = new WebSocket(`ws://${window.location.host}/ws`);
+            const ws = new WebSocket(`ws://${window.location.host}/ws?token=${encodeURIComponent(token)}`);
             ws.onopen = () => console.log('WebSocket connecté');
             ws.onmessage = (event) => {
                 try {

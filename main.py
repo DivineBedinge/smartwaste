@@ -96,6 +96,8 @@ class TourneeCreate(BaseModel):
 
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", "10485760"))
+CORS_ORIGINS = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "http://localhost:8000").split(",") if origin.strip()]
 
 # ========== MODÈLE 4 CLASSES (SÉVÉRITÉ) – pour signalements ==========
 MODEL_SEVERITY_PATH = os.getenv("MODEL_SEVERITY_PATH", "./smartwaste_mobilenetv2_clean.onnx")
@@ -121,7 +123,7 @@ app = FastAPI(title="SmartWaste CM+ API", version="0.1.0")
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -311,6 +313,25 @@ def preprocess(image_bytes):
     arr = np.expand_dims(arr, axis=0).astype(np.float32)
     return arr
 
+
+async def read_validated_image(file: UploadFile) -> bytes:
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(400, "Le fichier doit être une image")
+    image_bytes = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(image_bytes) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "Image trop volumineuse")
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            image.verify()
+    except Exception as exc:
+        raise HTTPException(400, "Image invalide") from exc
+    return image_bytes
+
+
+def validate_coordinates(lat: float, lon: float) -> None:
+    if not -90 <= lat <= 90 or not -180 <= lon <= 180:
+        raise HTTPException(422, "Coordonnées GPS invalides")
+
 def predict_severity(image_bytes):
     input_data = preprocess(image_bytes)
     input_name = session_severity.get_inputs()[0].name
@@ -403,6 +424,10 @@ def gestionnaire_map():
 # ========== WEBSOCKET ==========
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    token = websocket.query_params.get("token")
+    if not token or not decode_token(token):
+        await websocket.close(code=1008)
+        return
     await ws_manager.connect(websocket)
     try:
         while True:
@@ -488,10 +513,8 @@ async def create_signalement(
     lon: float = Form(...),
     current_user: dict = Depends(require_auth)  # <-- AJOUT
 ):
-    if not file.content_type.startswith("image/"):
-        raise HTTPException(400, "Le fichier doit être une image")
-
-    image_bytes = await file.read()
+    validate_coordinates(lat, lon)
+    image_bytes = await read_validated_image(file)
     photo_base64 = base64.b64encode(image_bytes).decode('utf-8')
 
     try:
@@ -799,7 +822,8 @@ async def soumettre_preuve_traitement(
     if user["role"] == "agent" and report["agent_id"] != user["user_id"]:
         raise HTTPException(403, "Signalement non assigné à cet agent")
 
-    image_bytes = await file.read()
+    validate_coordinates(lat, lon)
+    image_bytes = await read_validated_image(file)
     photo_preuve_base64 = base64.b64encode(image_bytes).decode('utf-8')
 
     severity, confiance = predict_severity(image_bytes)
@@ -940,7 +964,7 @@ def chatbot_reponse(question: str):
 @app.post("/api/v1/chatbot/analyser-image")
 async def chatbot_analyser_image(file: UploadFile = File(...)):
     """Analyse une image seule et renvoie la fiche associée."""
-    image_bytes = await file.read()
+    image_bytes = await read_validated_image(file)
     
     type_dechet, confiance_type = predict_type(image_bytes)
     
@@ -1514,7 +1538,7 @@ async def chatbot_ask_post(
     session_id: str = Form(None)
 ):
     """Version POST avec image et session."""
-    image_bytes = await file.read() if file else None
+    image_bytes = await read_validated_image(file) if file else None
     return _process_chatbot_ask(question or "", lat, lon, image_bytes, session_id)
 
 # ========== SUIVI AGENT (TEMPS RÉEL) ==========
@@ -1524,6 +1548,7 @@ async def envoyer_position(
     lon: float,
     user: dict = Depends(require_agent)
 ):
+    validate_coordinates(lat, lon)
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("""

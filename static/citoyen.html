@@ -479,7 +479,8 @@
 
         // --- WEBSOCKET NOTIFICATIONS ---
         function connectWebSocket() {
-            const ws = new WebSocket(`ws://${window.location.host}/ws`);
+            if (!token) return;
+            const ws = new WebSocket(`ws://${window.location.host}/ws?token=${encodeURIComponent(token)}`);
             ws.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
