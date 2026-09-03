@@ -42,6 +42,7 @@ from session_manager import session_manager
 from app.router import is_faq_question
 from route_optimizer import get_graph, calculer_matrice_distances, resoudre_vrp
 from app.routers.workflows import router as workflows_router
+from app.services.routing import get_route
 from fastapi import APIRouter, Depends, HTTPException, status
 
 
@@ -1835,7 +1836,6 @@ def points_tournee(tournee_id: int, user: dict = Depends(require_agent)):
 
 @app.get("/api/v1/tournees/{tournee_id}/itineraire")
 def itineraire_tournee(tournee_id: int, user: dict = Depends(require_agent)):
-    import requests
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute("""
@@ -1852,17 +1852,10 @@ def itineraire_tournee(tournee_id: int, user: dict = Depends(require_agent)):
     if len(points) < 2:
         return {"points": points, "geometry": None}
 
-    coords = ";".join([f"{p['lon']},{p['lat']}" for p in points])
-    url = f"https://router.project-osrm.org/route/v1/driving/{coords}?overview=full&geometries=geojson"
-    
-    response = requests.get(url)
-    if response.status_code != 200:
-        return {"points": points, "geometry": None}
-    
-    route = response.json()
-    geometry = route["routes"][0]["geometry"]
-
-    return {"points": points, "geometry": geometry}
+    route = get_route([(p["lat"], p["lon"]) for p in points])
+    if not route:
+        return {"points": points, "geometry": None, "message": "Itinéraire temporairement indisponible"}
+    return {"points": points, **route}
 
 # ========== TERMINER UNE TOURNÉE ==========
 @app.put("/api/v1/tournees/{tournee_id}/terminer")
