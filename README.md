@@ -73,15 +73,13 @@ git clone https://github.com/ton-repo/smartwaste-cm.git
 cd smartwaste-cm
 ```
 
-### 2. Lancer PostgreSQL/PostGIS et Redis avec Docker
+### 2. Lancer PostgreSQL/PostGIS avec Docker
 
 ```bash
 docker compose up -d
 ```
 
-Ceci démarre :
-- `smartwaste_postgres` (PostgreSQL + PostGIS)
-- `smartwaste_redis` (Redis 7)
+Ceci démarre `smartwaste_postgres` (PostgreSQL + PostGIS). Redis est utilisé par le chatbot lorsqu'un service Redis est disponible; le compose actuel ne le démarre pas.
 
 ### 3. Configurer l'environnement backend
 
@@ -127,6 +125,25 @@ source venv/bin/activate     # Linux/Mac
 ```bash
 pip install -r requirements.txt
 ```
+
+### 6. Préparer la base et démarrer l'API
+
+Après avoir configuré `DATABASE_URL`, appliquez la migration additive :
+
+```bash
+python migrate_schema.py
+uvicorn main:app --reload
+```
+
+Les pages statiques sont servies par l'API : `/citoyen`, `/agent`, `/ramasseur` et `/gestionnaire`. Il n'y a pas de build frontend séparé configuré.
+
+### Tests et limites
+
+```bash
+pytest
+```
+
+Les tests unitaires de règles IA et de transitions sont hermétiques. Les tests API historiques nécessitent une base PostgreSQL, des modèles et des comptes de test configurés; leurs résultats ne sont pas représentatifs sans ces dépendances. Les calendriers domestiques, les notifications persistantes, la rétention GPS et les adaptations complètes des écrans restent partiels.
 
 ### 6. Installer Ollama et le modèle LLM
 
