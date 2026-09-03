@@ -44,6 +44,7 @@ from route_optimizer import get_graph, calculer_matrice_distances, resoudre_vrp
 from app.routers.workflows import router as workflows_router
 from app.services.routing import get_route
 from app.services.notifications import create_notification
+from app.services.gps_tracking import PositionRateLimiter
 from fastapi import APIRouter, Depends, HTTPException, status
 
 
@@ -99,7 +100,9 @@ class TourneeCreate(BaseModel):
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", "10485760"))
+GPS_UPDATE_INTERVAL_SECONDS = float(os.getenv("GPS_UPDATE_INTERVAL_SECONDS", "10"))
 CORS_ORIGINS = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "http://localhost:8000").split(",") if origin.strip()]
+gps_rate_limiter = PositionRateLimiter(GPS_UPDATE_INTERVAL_SECONDS)
 
 # ========== MODÈLE 4 CLASSES (SÉVÉRITÉ) – pour signalements ==========
 MODEL_SEVERITY_PATH = os.getenv("MODEL_SEVERITY_PATH", "./smartwaste_mobilenetv2_clean.onnx")
@@ -1628,9 +1631,25 @@ async def envoyer_position(
     lon: float,
     user: dict = Depends(require_agent)
 ):
+    if user["role"] != "agent":
+        raise HTTPException(403, "Réservé aux agents institutionnels")
     validate_coordinates(lat, lon)
+    if not gps_rate_limiter.allow(user["user_id"]):
+        raise HTTPException(429, "Mise à jour GPS trop fréquente")
     conn = get_db_connection()
     cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT 1 FROM reports
+        WHERE agent_id = %s AND status IN ('assigne', 'en_route', 'en_cours')
+        LIMIT 1
+        """,
+        (user["user_id"],),
+    )
+    if not cur.fetchone():
+        cur.close()
+        conn.close()
+        raise HTTPException(409, "Aucune mission active")
     cur.execute("""
         INSERT INTO agent_positions (agent_id, lat, lon, timestamp)
         VALUES (%s, %s, %s, NOW())
