@@ -21,6 +21,7 @@ from database import get_db_connection
 from auth import router as auth_router
 from core.security import decode_token
 from core.classification import decide_severity
+from core.policy import REPORT_TRANSITIONS, can_transition
 from normalizer import normaliser_et_corriger, detecter_langue, extraire_mots_cles
 from chatbot_utils import (
     generer_embedding, recherche_rag, construire_contexte,
@@ -98,6 +99,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 
 # ========== MODÈLE 4 CLASSES (SÉVÉRITÉ) – pour signalements ==========
 MODEL_SEVERITY_PATH = os.getenv("MODEL_SEVERITY_PATH", "./smartwaste_mobilenetv2_clean.onnx")
+MODEL_VERSION = os.getenv("MODEL_VERSION", "unknown")
 session_severity = ort.InferenceSession(MODEL_SEVERITY_PATH)
 CLASS_NAMES_SEVERITY = ["faible", "moderee", "critique", "hors_sujet"]
 
@@ -216,6 +218,12 @@ def modifier_agent(agent_id: int, payload: AgentUpdate, user: dict = Depends(req
 class CommentaireUpdate(BaseModel):
     commentaire: str
 
+
+class HumanReviewUpdate(BaseModel):
+    final_severity: str
+    reason: str
+    out_of_scope: bool = False
+
 @app.put("/api/v1/signalements/{report_id}/commentaire")
 def ajouter_commentaire(report_id: int, payload: CommentaireUpdate, user: dict = Depends(require_admin)):
     conn = get_db_connection(); cur = conn.cursor()
@@ -226,6 +234,70 @@ def ajouter_commentaire(report_id: int, payload: CommentaireUpdate, user: dict =
     if not result:
         raise HTTPException(404, "Signalement non trouvé")
     return {"message": "Commentaire enregistré"}
+
+
+@app.put("/api/v1/signalements/{report_id}/review")
+def review_signalement(
+    report_id: int,
+    payload: HumanReviewUpdate,
+    user: dict = Depends(require_admin),
+):
+    if payload.final_severity not in ["faible", "moderee", "critique"]:
+        raise HTTPException(400, "Sévérité finale invalide")
+    if not payload.reason.strip():
+        raise HTTPException(422, "Le motif de décision est obligatoire")
+
+    final_status = "hors_sujet" if payload.out_of_scope else "valide"
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute(
+        "SELECT status, severity, confidence FROM reports WHERE id = %s",
+        (report_id,),
+    )
+    report = cur.fetchone()
+    if not report:
+        cur.close()
+        conn.close()
+        raise HTTPException(404, "Signalement non trouvé")
+    if not can_transition(REPORT_TRANSITIONS, report["status"], final_status):
+        cur.close()
+        conn.close()
+        raise HTTPException(409, "Transition de revue invalide")
+
+    cur.execute(
+        """
+        UPDATE reports
+        SET status = %s, final_severity = %s, reviewed_by = %s,
+            reviewed_at = NOW(), review_reason = %s,
+            rejection_reason = CASE WHEN %s = 'hors_sujet' THEN %s ELSE NULL END,
+            human_review_required = FALSE, updated_at = NOW()
+        WHERE id = %s
+        RETURNING id, status, final_severity
+        """,
+        (
+            final_status, payload.final_severity, user["user_id"], payload.reason,
+            final_status, payload.reason, report_id,
+        ),
+    )
+    result = cur.fetchone()
+    cur.execute(
+        """
+        INSERT INTO audit_logs
+            (actor_id, actor_role, action, resource_type, resource_id,
+             old_value, new_value, reason)
+        VALUES (%s, %s, 'human_review', 'report', %s, %s, %s, %s)
+        """,
+        (
+            user["user_id"], user["role"], report_id,
+            {"status": report["status"], "severity": report["severity"]},
+            {"status": final_status, "severity": payload.final_severity},
+            payload.reason,
+        ),
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+    return dict(result)
 
 # ========== FONCTIONS UTILITAIRES ==========
 def preprocess(image_bytes):
@@ -460,12 +532,16 @@ async def create_signalement(
     # INSERT avec user_id
     cur.execute("""
         INSERT INTO reports (user_id, geometry, severity, confidence, status, photo_base64, waste_type,
-                             is_primary, report_count, duplicate_group_id)
+                     is_primary, report_count, duplicate_group_id,
+                     classification_source, classification_model_version, analyzed_at,
+                     human_review_required, initial_severity, final_severity)
         VALUES (%s, ST_SetSRID(ST_MakePoint(%s, %s), 4326), %s, %s, %s, %s, %s,
-                %s, %s, %s)
+            %s, %s, %s, %s, %s, NOW(), %s, %s, %s)
         RETURNING id
-    """, (current_user["user_id"], lon, lat, severity, confidence, status, photo_base64, type_dechet,
-          is_primary, report_count, duplicate_group_id))
+        """, (current_user["user_id"], lon, lat, severity, confidence, status, photo_base64, type_dechet,
+          is_primary, report_count, duplicate_group_id, severity_decision.source, MODEL_VERSION,
+          severity_decision.human_review_required, severity_decision.predicted_class,
+          None if severity_decision.human_review_required else severity_decision.predicted_class))
     report_id = cur.fetchone()[0]
 
     if is_primary:
