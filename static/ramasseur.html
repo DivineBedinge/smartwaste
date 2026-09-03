@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SmartWaste CM+ - Ramasseur</title>
+    <style>
+        body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #17324d; }
+        form, article { border: 1px solid #d6e0e8; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
+        input, button, select { padding: .65rem; margin: .25rem 0; max-width: 100%; }
+        button { cursor: pointer; background: #0b7285; color: white; border: 0; border-radius: 4px; }
+        button.missed { background: #c92a2a; }
+        .muted { color: #5c6b73; }
+    </style>
+</head>
+<body>
+    <h1>Calendrier du ramasseur</h1>
+    <form id="login-form">
+        <label>Email <input id="email" type="email" required></label>
+        <label>Mot de passe <input id="password" type="password" required></label>
+        <button type="submit">Se connecter</button>
+        <p id="login-error" role="alert"></p>
+    </form>
+    <section id="calendar" hidden>
+        <h2>Collectes affectées</h2>
+        <p class="muted">Seules les occurrences affectées à votre compte sont affichées.</p>
+        <div id="collections"></div>
+    </section>
+    <script>
+        const loginForm = document.getElementById('login-form');
+        const calendar = document.getElementById('calendar');
+        const collections = document.getElementById('collections');
+        const error = document.getElementById('login-error');
+        let token = localStorage.getItem('token') || '';
+
+        async function api(path, options = {}) {
+            const response = await fetch(path, {
+                ...options,
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(options.headers || {}) }
+            });
+            const body = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(body.detail || 'Erreur API');
+            return body;
+        }
+
+        async function loadCollections() {
+            collections.textContent = 'Chargement...';
+            try {
+                const rows = await api('/api/v1/ramasseur/collectes');
+                collections.replaceChildren(...rows.map(row => {
+                    const article = document.createElement('article');
+                    article.innerHTML = `<strong>Collecte #${row[0]}</strong><p>${new Date(row[2]).toLocaleString()} - ${row[6] || 'Zone non renseignée'}</p><p>Statut : ${row[3]}</p>`;
+                    if (['affectee', 'en_route', 'arrivee'].includes(row[3])) {
+                        for (const [status, label] of [['en_route', 'En route'], ['arrivee', 'Arrivé'], ['effectuee', 'Effectuée']]) {
+                            const button = document.createElement('button');
+                            button.textContent = label;
+                            button.onclick = async () => { await updateStatus(row[0], status); };
+                            article.append(button);
+                        }
+                        const missed = document.createElement('button');
+                        missed.textContent = 'Collecte manquée';
+                        missed.className = 'missed';
+                        missed.onclick = async () => { const reason = prompt('Motif obligatoire'); if (reason) await updateStatus(row[0], 'manquee', reason); };
+                        article.append(missed);
+                    }
+                    return article;
+                }));
+            } catch (exception) { collections.textContent = exception.message; }
+        }
+
+        async function updateStatus(id, status, missed_reason = null) {
+            await api(`/api/v1/ramasseur/collectes/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status, missed_reason }) });
+            await loadCollections();
+        }
+
+        loginForm.addEventListener('submit', async event => {
+            event.preventDefault();
+            error.textContent = '';
+            try {
+                const response = await fetch('/api/v1/auth/login', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ email: email.value, password: password.value }) });
+                const body = await response.json();
+                if (!response.ok || body.role !== 'ramasseur') throw new Error('Compte ramasseur requis');
+                token = body.access_token; localStorage.setItem('token', token); calendar.hidden = false; await loadCollections();
+            } catch (exception) { error.textContent = exception.message; }
+        });
+    </script>
+</body>
+</html>

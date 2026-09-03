@@ -203,6 +203,41 @@ def creer_agent(payload: AgentCreate, user: dict = Depends(require_admin)):
     conn.commit(); cur.close(); conn.close()
     return {"id": agent_id, "email": payload.email, "role": "agent", "arrondissement": payload.arrondissement}
 
+
+class CollectorCreate(BaseModel):
+    email: str
+    password: str
+    arrondissement: str = None
+
+
+@app.post("/api/v1/ramasseurs")
+def creer_ramasseur(payload: CollectorCreate, user: dict = Depends(require_admin)):
+    from core.security import hash_password
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM users WHERE email=%s", (payload.email,))
+    if cur.fetchone():
+        cur.close()
+        conn.close()
+        raise HTTPException(400, "Email déjà utilisé")
+    cur.execute(
+        """
+        INSERT INTO users (email, password_hash, role, arrondissement)
+        VALUES (%s, %s, 'ramasseur', %s) RETURNING id
+        """,
+        (payload.email, hash_password(payload.password), payload.arrondissement),
+    )
+    collector_id = cur.fetchone()[0]
+    conn.commit()
+    cur.close()
+    conn.close()
+    return {
+        "id": collector_id,
+        "email": payload.email,
+        "role": "ramasseur",
+        "arrondissement": payload.arrondissement,
+    }
+
 @app.put("/api/v1/agents/{agent_id}")
 def modifier_agent(agent_id: int, payload: AgentUpdate, user: dict = Depends(require_admin)):
     conn = get_db_connection(); cur = conn.cursor()
@@ -425,6 +460,11 @@ def agent_map():
 @app.get("/gestionnaire-map")
 def gestionnaire_map():
     return FileResponse("static/gestionnaire_map.html")
+
+
+@app.get("/ramasseur")
+def ramasseur():
+    return FileResponse("static/ramasseur.html")
 
 # ========== WEBSOCKET ==========
 @app.websocket("/ws")
