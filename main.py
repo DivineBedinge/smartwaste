@@ -40,6 +40,7 @@ from chatbot_utils import formuler_reponse_humaine
 from session_manager import session_manager
 from app.router import is_faq_question
 from route_optimizer import get_graph, calculer_matrice_distances, resoudre_vrp
+from app.routers.workflows import router as workflows_router
 from fastapi import APIRouter, Depends, HTTPException, status
 
 
@@ -127,6 +128,7 @@ app.add_middleware(
 # Dossier statique
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.include_router(auth_router)
+app.include_router(workflows_router)
 
 # Sécurité
 security = HTTPBearer()
