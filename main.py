@@ -8,7 +8,6 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import List, Optional
 import psycopg2
 import psycopg2.extras
-import onnxruntime as ort
 import numpy as np
 import csv, io
 import base64
@@ -22,7 +21,7 @@ from database import get_db_connection
 from auth import router as auth_router
 from core.security import decode_token
 from core.classification import decide_severity
-from core.policy import REPORT_TRANSITIONS, can_transition
+from core.policy import REPORT_TRANSITIONS, can_transition, is_agent_role, is_manager_role
 from normalizer import normaliser_et_corriger, detecter_langue, extraire_mots_cles
 from chatbot_utils import (
     generer_embedding, recherche_rag, construire_contexte,
@@ -40,12 +39,13 @@ from redis_utils import (
 )
 from chatbot_utils import formuler_reponse_humaine
 from session_manager import session_manager
-from app.router import is_faq_question
+from app.router import chatbot_cache_key, detect_simple_intent, is_faq_question, simple_chat_response
 from route_optimizer import get_graph, calculer_matrice_distances, resoudre_vrp
 from app.routers.workflows import router as workflows_router
 from app.services.routing import get_route
 from app.services.notifications import create_notification
 from app.services.gps_tracking import PositionRateLimiter
+from app.services.ai_runtime import get_onnx_session, runtime_status
 from fastapi import APIRouter, Depends, HTTPException, status
 
 
@@ -92,6 +92,7 @@ salutations = [
     'good evening', 'goodevening', 'morning', 'evening', 'on dit quoi',
     'bjr', 'bsr', 'hi', 'hey', 'coucou', 'yo', 'wesh', 'salam'
 ]
+FAQ_RELEVANCE_THRESHOLD = 0.30
 
 class TourneeCreate(BaseModel):
     agent_id: int
@@ -108,12 +109,10 @@ gps_rate_limiter = PositionRateLimiter(GPS_UPDATE_INTERVAL_SECONDS)
 # ========== MODÈLE 4 CLASSES (SÉVÉRITÉ) – pour signalements ==========
 MODEL_SEVERITY_PATH = os.getenv("MODEL_SEVERITY_PATH", "./smartwaste_mobilenetv2_clean.onnx")
 MODEL_VERSION = os.getenv("MODEL_VERSION", "unknown")
-session_severity = ort.InferenceSession(MODEL_SEVERITY_PATH)
 CLASS_NAMES_SEVERITY = ["faible", "moderee", "critique", "hors_sujet"]
 
 # ========== MODÈLE 12 CLASSES (TYPE) – pour le chatbot ==========
 MODEL_TYPE_PATH = os.getenv("MODEL_TYPE_PATH", "./modele_12classes.onnx")
-session_type = ort.InferenceSession(MODEL_TYPE_PATH)
 CLASS_NAMES_TYPE = [
     'battery', 'biological', 'brown-glass', 'cardboard', 'clothes',
     'green-glass', 'metal', 'paper', 'plastic', 'shoes', 'trash', 'white-glass'
@@ -121,7 +120,6 @@ CLASS_NAMES_TYPE = [
 
 # ========== MODÈLE 2 CLASSES (RECYCLABLE / ORGANIQUE) – pour le chatbot ==========
 MODEL_BINARY_PATH = os.getenv("MODEL_BINARY_PATH", "./modele_2classes.onnx")
-session_binary = ort.InferenceSession(MODEL_BINARY_PATH)
 CLASS_NAMES_BINARY = ["organique", "recyclable"]
 
 app = FastAPI(title="SmartWaste CM+ API", version="0.1.0")
@@ -145,18 +143,18 @@ security = HTTPBearer()
 
 def require_admin(credentials: HTTPAuthorizationCredentials = Depends(security)):
     payload = decode_token(credentials.credentials)
-    if not payload or payload["role"] not in ["admin", "municipal"]:
+    if not payload or not is_manager_role(payload.get("role", "")):
         raise HTTPException(403, "Accès refusé")
     return payload
 
 def require_agent(credentials: HTTPAuthorizationCredentials = Depends(security)):
     payload = decode_token(credentials.credentials)
-    if not payload or payload["role"] not in ["admin", "municipal", "agent"]:
+    if not payload or not is_agent_role(payload.get("role", ""), include_managers=True):
         raise HTTPException(403, "Accès refusé")
     return payload
 
 def is_manager(payload: dict) -> bool:
-    return payload.get("role") in ["admin", "municipal"]
+    return is_manager_role(payload.get("role", ""))
 
 def require_auth(credentials: HTTPAuthorizationCredentials = Depends(security)):
     payload = decode_token(credentials.credentials)
@@ -167,21 +165,29 @@ def require_auth(credentials: HTTPAuthorizationCredentials = Depends(security)):
 # ========== GESTION DES CONNEXIONS WEBSOCKET ==========
 class WSManager:
     def __init__(self):
-        self.connections: List[WebSocket] = []
+        self.connections: dict[WebSocket, dict] = {}
 
-    async def connect(self, websocket: WebSocket):
+    async def connect(self, websocket: WebSocket, user: dict):
         await websocket.accept()
-        self.connections.append(websocket)
+        self.connections[websocket] = {"user_id": user["user_id"], "role": user["role"]}
 
     def disconnect(self, websocket: WebSocket):
-        self.connections.remove(websocket)
+        self.connections.pop(websocket, None)
 
-    async def broadcast(self, message: dict):
-        for conn in self.connections:
+    async def _send_where(self, message: dict, predicate):
+        for conn, identity in list(self.connections.items()):
+            if not predicate(identity):
+                continue
             try:
                 await conn.send_text(json.dumps(message))
-            except:
+            except Exception:
                 self.disconnect(conn)
+
+    async def send_to_user(self, user_id: int, message: dict):
+        await self._send_where(message, lambda identity: identity["user_id"] == user_id)
+
+    async def send_to_managers(self, message: dict):
+        await self._send_where(message, lambda identity: is_manager_role(identity["role"]))
 
 ws_manager = WSManager()
 
@@ -379,6 +385,7 @@ def validate_coordinates(lat: float, lon: float) -> None:
         raise HTTPException(422, "Coordonnées GPS invalides")
 
 def predict_severity(image_bytes):
+    session_severity = get_onnx_session(MODEL_SEVERITY_PATH)
     input_data = preprocess(image_bytes)
     input_name = session_severity.get_inputs()[0].name
     outputs = session_severity.run(None, {input_name: input_data})
@@ -391,6 +398,7 @@ def predict_severity(image_bytes):
     return severity, confidence
 
 def predict_type(image_bytes):
+    session_type = get_onnx_session(MODEL_TYPE_PATH)
     input_data = preprocess(image_bytes)
     input_data = np.transpose(input_data, (0, 2, 3, 1))
     input_name = session_type.get_inputs()[0].name
@@ -404,6 +412,7 @@ def predict_type(image_bytes):
     return type_dechet, confidence
 
 def predict_binary(image_bytes):
+    session_binary = get_onnx_session(MODEL_BINARY_PATH)
     input_data = preprocess(image_bytes)
     input_data = np.transpose(input_data, (0, 2, 3, 1))
     input_name = session_binary.get_inputs()[0].name
@@ -443,6 +452,26 @@ def find_duplicate_group(lat: float, lon: float, waste_type: str, radius_meters:
 def root():
     return {"message": "SmartWaste CM+ API is running"}
 
+
+@app.get("/health")
+def health():
+    database_status = "unavailable"
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        database_status = "available" if cur.fetchone() else "unavailable"
+    except Exception:
+        pass
+    finally:
+        if cur is not None:
+            cur.close()
+        if conn is not None:
+            conn.close()
+    return {"api": "operational", "database": database_status, **runtime_status()}
+
 @app.get("/dashboard")
 def dashboard():
     return FileResponse("static/dashboard.html")
@@ -475,11 +504,13 @@ def ramasseur():
 # ========== WEBSOCKET ==========
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    token = websocket.query_params.get("token")
-    if not token or not decode_token(token):
+    protocols = [value.strip() for value in websocket.headers.get("sec-websocket-protocol", "").split(",")]
+    token = protocols[1] if len(protocols) == 2 and protocols[0].lower() == "bearer" else None
+    user = decode_token(token) if token else None
+    if not user or "user_id" not in user or "role" not in user:
         await websocket.close(code=1008)
         return
-    await ws_manager.connect(websocket)
+    await ws_manager.connect(websocket, user)
     try:
         while True:
             await websocket.receive_text()
@@ -659,7 +690,7 @@ async def create_signalement(
     conn.close()
 
     import asyncio
-    asyncio.create_task(ws_manager.broadcast({
+    asyncio.create_task(ws_manager.send_to_managers({
         "type": "nouveau_signalement",
         "id": report_id,
         "severity": severity,
@@ -868,7 +899,7 @@ def reclasser_signalement(report_id: int, nouvelle_severite: str, user: dict = D
 def valider_signalement(report_id: int, user: dict = Depends(require_admin)):
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    cur.execute("SELECT status, agent_id FROM reports WHERE id = %s", (report_id,))
+    cur.execute("SELECT status, agent_id, user_id FROM reports WHERE id = %s", (report_id,))
     report = cur.fetchone()
     if not report:
         raise HTTPException(404, "Signalement non trouvé")
@@ -916,7 +947,7 @@ async def soumettre_preuve_traitement(
 ):
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    cur.execute("SELECT status, agent_id FROM reports WHERE id = %s", (report_id,))
+    cur.execute("SELECT status, agent_id, user_id FROM reports WHERE id = %s", (report_id,))
     report = cur.fetchone()
     if not report:
         raise HTTPException(404, "Signalement non trouvé")
@@ -952,7 +983,7 @@ async def soumettre_preuve_traitement(
     conn.close()
 
     import asyncio
-    asyncio.create_task(ws_manager.broadcast({
+    asyncio.create_task(ws_manager.send_to_user(report["user_id"], {
         "type": "traitement_termine",
         "report_id": report_id,
         "status": nouveau_statut
@@ -1154,6 +1185,10 @@ def _process_chatbot_ask(
     et reformulation humaine des réponses.
     """
 
+    simple_response = simple_chat_response(question)
+    if simple_response is not None:
+        return simple_response
+
     # ============================================================
     # 0. GESTION DE SESSION (mémoire)
     # ============================================================
@@ -1165,19 +1200,24 @@ def _process_chatbot_ask(
         type_img, _ = predict_type(image_bytes)
         question = f"{question} {type_img}"
 
+    langue = detecter_langue(question)
+    question_normalisee = normaliser_et_corriger(question)
+    question_lower = question_normalisee.lower()
+    intention = detect_simple_intent(question_normalisee)
+    cache_key = chatbot_cache_key(langue, intention, question_normalisee)
+
     # ============================================================
     # 1. VÉRIFICATION DU CACHE SÉMANTIQUE
     # ============================================================
-    resultat_cache = obtenir_reponse_cachee(question)
+    resultat_cache = obtenir_reponse_cachee(cache_key)
     if resultat_cache:
         # Si la question est en anglais et que le cache est en français, on traduit
-        langue = detecter_langue(question)
         if langue == 'en' and resultat_cache.get("langue") == 'fr':
             resultat_cache["reponse"] = traduire_en_anglais(resultat_cache["reponse"])
         
         resultat_cache["source"] = "cache"
         resultat_cache["question_originale"] = question
-        resultat_cache["langue"] = detecter_langue(question)
+        resultat_cache["langue"] = langue
         
         if session_id:
             ajouter_message_session(session_id, "user", question)
@@ -1189,9 +1229,6 @@ def _process_chatbot_ask(
     if session_id:
         ajouter_message_session(session_id, "user", question)
 
-    langue = detecter_langue(question)
-    question_normalisee = normaliser_et_corriger(question)
-    question_lower = question_normalisee.lower()
 
     # ============================================================
     # 2. DÉTECTION DE QUARTIER
@@ -1220,7 +1257,7 @@ def _process_chatbot_ask(
     # ============================================================
     if not quartier_trouve:
         faq_results = recherche_bm25(question_normalisee, top_k=1)
-        if faq_results and faq_results[0]["score"] > 0.3:
+        if faq_results and faq_results[0]["score"] > FAQ_RELEVANCE_THRESHOLD:
             faq = faq_results[0]
             if langue == 'en':
                 reponse_faq = traduire_en_anglais(faq["reponse"])
@@ -1239,7 +1276,7 @@ def _process_chatbot_ask(
                 "score": faq["score"]
             }
             
-            enregistrer_reponse_cachee(question, resultat)
+            enregistrer_reponse_cachee(cache_key, resultat)
             if session_id:
                 ajouter_message_session(session_id, "assistant", reponse_humaine)
             
@@ -1337,7 +1374,7 @@ def _process_chatbot_ask(
                 **({"message_contexte": f"Réponse basée sur le contexte précédent : {', '.join(types_precedents)}"} if contexte_session else {})
             }
             
-            enregistrer_reponse_cachee(question, resultat)
+            enregistrer_reponse_cachee(cache_key, resultat)
             if session_id:
                 ajouter_message_session(session_id, "assistant", reponse_finale, type_dechets=types_detectes)
             
@@ -1377,7 +1414,7 @@ def _process_chatbot_ask(
         resultat = point_collecte_proche(lat, lon)
         reponse_humaine = formuler_reponse_humaine(resultat, langue)
         resultat["reponse"] = reponse_humaine
-        enregistrer_reponse_cachee(question, resultat)
+        enregistrer_reponse_cachee(cache_key, resultat)
         if session_id:
             ajouter_message_session(session_id, "assistant", reponse_humaine)
         return resultat
@@ -1438,7 +1475,7 @@ def _process_chatbot_ask(
                 **({"message_contexte": f"Réponse basée sur le contexte précédent : {', '.join(types_precedents)}"} if contexte_session else {})
             }
             
-            enregistrer_reponse_cachee(question, resultat)
+            enregistrer_reponse_cachee(cache_key, resultat)
             if session_id:
                 ajouter_message_session(session_id, "assistant", reponse_finale, type_dechets=types_detectes)
             
@@ -1458,7 +1495,7 @@ def _process_chatbot_ask(
         else:
             reponse = "Bonjour ! Je suis SmartWaste Assistant. Demandez-moi comment recycler ou où vendre vos déchets à Douala."
         resultat = {"langue": langue, "question_originale": question, "reponse": reponse}
-        enregistrer_reponse_cachee(question, resultat)
+        enregistrer_reponse_cachee(cache_key, resultat)
         if session_id:
             ajouter_message_session(session_id, "assistant", reponse)
         return resultat
@@ -1509,7 +1546,7 @@ def _process_chatbot_ask(
                         "Points de collecte à Bonaberi"
                     ]
                 }
-                enregistrer_reponse_cachee(question, resultat)
+                enregistrer_reponse_cachee(cache_key, resultat)
                 if session_id:
                     ajouter_message_session(session_id, "assistant", resultat["reponse"])
                 return resultat
@@ -1527,7 +1564,7 @@ def _process_chatbot_ask(
                 "chunks_utilises": len(reranked)
             }
             
-            enregistrer_reponse_cachee(question, resultat)
+            enregistrer_reponse_cachee(cache_key, resultat)
             if session_id:
                 ajouter_message_session(session_id, "assistant", reponse_llm)
             
@@ -1569,7 +1606,7 @@ def _process_chatbot_ask(
                 "contact_douala": fiche["contact_douala"],
                 "conseil_pratique": fiche["conseil_pratique"],
             }
-            enregistrer_reponse_cachee(question, resultat)
+            enregistrer_reponse_cachee(cache_key, resultat)
             if session_id:
                 ajouter_message_session(session_id, "assistant", reponse, type_dechets=[fiche["type_dechet"]])
             return resultat
@@ -1591,7 +1628,7 @@ def _process_chatbot_ask(
                 "contact_douala": fiche["contact_douala"],
                 "methode_valorisation": fiche["methode_valorisation"],
             }
-            enregistrer_reponse_cachee(question, resultat)
+            enregistrer_reponse_cachee(cache_key, resultat)
             if session_id:
                 ajouter_message_session(session_id, "assistant", reponse_finale, type_dechets=[fiche["type_dechet"]])
             return resultat
@@ -1615,7 +1652,7 @@ def _process_chatbot_ask(
         ]
     }
     
-    enregistrer_reponse_cachee(question, resultat)
+    enregistrer_reponse_cachee(cache_key, resultat)
     if session_id:
         ajouter_message_session(session_id, "assistant", reponse)
     
@@ -1651,7 +1688,7 @@ async def envoyer_position(
     lon: float,
     user: dict = Depends(require_agent)
 ):
-    if user["role"] != "agent":
+    if not is_agent_role(user.get("role", "")):
         raise HTTPException(403, "Réservé aux agents institutionnels")
     validate_coordinates(lat, lon)
     if not gps_rate_limiter.allow(user["user_id"]):
@@ -1681,7 +1718,7 @@ async def envoyer_position(
     conn.close()
 
     import asyncio
-    asyncio.create_task(ws_manager.broadcast({
+    asyncio.create_task(ws_manager.send_to_managers({
         "type": "agent_position",
         "agent_id": user["user_id"],
         "lat": lat,
@@ -1854,10 +1891,10 @@ def tournees_en_cours(user: dict = Depends(require_agent)):
         LEFT JOIN users u ON u.id = t.agent_id
         LEFT JOIN reports r ON r.tournee_id = t.id
                 WHERE t.status IN ('planifiee', 'en_cours')
-                    AND (%s IN ('admin', 'municipal') OR t.agent_id = %s)
+                    AND (%s OR t.agent_id = %s)
         GROUP BY t.id, u.arrondissement
         ORDER BY t.planned_date DESC
-        """, (user["role"], user["user_id"]))
+        """, (is_manager_role(user["role"]), user["user_id"]))
     rows = cur.fetchall()
     cur.close()
     conn.close()
@@ -1872,12 +1909,12 @@ def points_tournee(tournee_id: int, user: dict = Depends(require_agent)):
                ST_Y(geometry) AS lat, ST_X(geometry) AS lon
         FROM reports
         WHERE tournee_id = %s
-          AND (%s IN ('admin', 'municipal') OR EXISTS (
+          AND (%s OR EXISTS (
               SELECT 1 FROM tours t
               WHERE t.id = reports.tournee_id AND t.agent_id = %s
           ))
         ORDER BY id
-    """, (tournee_id, user["role"], user["user_id"]))
+    """, (tournee_id, is_manager_role(user["role"]), user["user_id"]))
     rows = cur.fetchall()
     cur.close()
     conn.close()
@@ -1892,12 +1929,18 @@ def itineraire_tournee(tournee_id: int, user: dict = Depends(require_agent)):
                severity, status, waste_type
         FROM reports
         WHERE tournee_id = %s
+          AND (%s OR EXISTS (
+              SELECT 1 FROM tours t
+              WHERE t.id = reports.tournee_id AND t.agent_id = %s
+          ))
         ORDER BY id
-    """, (tournee_id,))
+    """, (tournee_id, is_manager_role(user["role"]), user["user_id"]))
     points = cur.fetchall()
     cur.close()
     conn.close()
 
+    if not points:
+        raise HTTPException(404, "Tournée non trouvée ou non assignée")
     if len(points) < 2:
         return {"points": points, "geometry": None}
 

@@ -4,6 +4,7 @@ from typing import Optional, List
 import psycopg2.extras
 from database import get_db_connection
 from core.security import decode_token
+from core.policy import is_agent_role
 from app.services.live_tracking import update_agent_position
 
 router = APIRouter(prefix="/api/v1/agent", tags=["agent"])
@@ -11,7 +12,7 @@ security = HTTPBearer()
 
 def get_agent_id(credentials: HTTPAuthorizationCredentials = Depends(security)):
     payload = decode_token(credentials.credentials)
-    if not payload or payload["role"] not in ["agent", "admin", "municipal"]:
+    if not payload or not is_agent_role(payload.get("role", ""), include_managers=True):
         raise HTTPException(403, "Accès refusé")
     return payload["user_id"]
 
@@ -91,7 +92,7 @@ async def envoyer_preuve(
     """L'agent confirme la collecte avec photo de preuve."""
     # Vérifier le rôle
     payload = decode_token(credentials.credentials)
-    if not payload or payload["role"] not in ["agent", "admin", "municipal"]:
+    if not payload or not is_agent_role(payload.get("role", ""), include_managers=True):
         raise HTTPException(403, "Accès refusé")
 
     image_bytes = await file.read()

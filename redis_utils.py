@@ -16,7 +16,10 @@ redis_client = redis.Redis(
 def obtenir_reponse_cachee(question: str):
     """Récupère une réponse mise en cache pour une question."""
     key = f"chatbot_cache:{question.lower().strip()}"
-    data = redis_client.get(key)
+    try:
+        data = redis_client.get(key)
+    except redis.RedisError:
+        return None
     if data:
         return json.loads(data)
     return None
@@ -24,12 +27,19 @@ def obtenir_reponse_cachee(question: str):
 def enregistrer_reponse_cachee(question: str, reponse: dict, ttl: int = 3600):
     """Enregistre une réponse dans le cache Redis."""
     key = f"chatbot_cache:{question.lower().strip()}"
-    redis_client.setex(key, ttl, json.dumps(reponse, ensure_ascii=False))
+    try:
+        redis_client.setex(key, ttl, json.dumps(reponse, ensure_ascii=False))
+    except redis.RedisError:
+        return False
+    return True
 
 def obtenir_memoire_session(session_id: str, max_messages: int = 20):
     """Récupère les derniers messages d'une session."""
     key = f"session:{session_id}:messages"
-    messages = redis_client.lrange(key, 0, -1)
+    try:
+        messages = redis_client.lrange(key, 0, -1)
+    except redis.RedisError:
+        return []
     messages = [json.loads(m) for m in messages][-max_messages:]
     return messages
 
@@ -41,8 +51,11 @@ def ajouter_message_session(session_id: str, role: str, content: str, type_deche
         "content": content,
         "type_dechets": type_dechets or []
     }
-    redis_client.rpush(key, json.dumps(message, ensure_ascii=False))
-    redis_client.ltrim(key, -50, -1)  # garde les 50 derniers
+    try:
+        redis_client.rpush(key, json.dumps(message, ensure_ascii=False))
+        redis_client.ltrim(key, -50, -1)  # garde les 50 derniers
+    except redis.RedisError:
+        return False
 
     # Mettre à jour la liste des types précédents
     if type_dechets:
@@ -51,11 +64,15 @@ def ajouter_message_session(session_id: str, role: str, content: str, type_deche
             # Éviter les doublons (on garde les 10 plus récents)
             redis_client.rpush(types_key, t)
         redis_client.ltrim(types_key, -10, -1)
+    return True
 
 def obtenir_types_precedents(session_id: str) -> list:
     """Récupère les types de déchets mentionnés dans les messages précédents."""
     types_key = f"session:{session_id}:types"
-    types = redis_client.lrange(types_key, 0, -1)
+    try:
+        types = redis_client.lrange(types_key, 0, -1)
+    except redis.RedisError:
+        return []
     # Dédoublonner en conservant l'ordre
     seen = []
     for t in types:

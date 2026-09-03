@@ -549,7 +549,8 @@
         // ====== WEBSOCKET ======
         function connectWebSocket() {
             if (!token) return;
-            const ws = new WebSocket(`ws://${window.location.host}/ws?token=${encodeURIComponent(token)}`);
+            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const ws = new WebSocket(`${wsProtocol}//${window.location.host}/ws`, ['bearer', token]);
             ws.onopen = () => console.log('WebSocket connecté');
             ws.onmessage = (event) => {
                 try {

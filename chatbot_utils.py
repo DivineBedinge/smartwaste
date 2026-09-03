@@ -3,7 +3,7 @@ import psycopg2.extras
 import requests
 import json
 import os
-from sentence_transformers import SentenceTransformer, CrossEncoder
+from app.services.ai_runtime import get_cross_encoder, get_embedding_model
 from database import get_db_connection
 from redis_utils import (
     obtenir_reponse_cachee,
@@ -17,39 +17,12 @@ from redis_utils import (
 # CHARGEMENT DES MODÈLES (avec fallback)
 # ============================================================
 
-def load_embedding_model():
-    local_multilingual = os.path.join(os.path.dirname(__file__), 'models', 'multilingual-e5-small')
-    if os.path.exists(local_multilingual):
-        model = SentenceTransformer(local_multilingual)
-        print("✅ Modèle multilingual-e5-small local chargé")
-        return model
-
-    local_mini = os.path.join(os.path.dirname(__file__), 'models', 'all-MiniLM-L6-v2')
-    if os.path.exists(local_mini):
-        model = SentenceTransformer(local_mini)
-        print("✅ Modèle all-MiniLM-L6-v2 local chargé")
-        return model
-
-    model = SentenceTransformer('all-MiniLM-L6-v2')
-    print("⚠️ Modèle distant utilisé")
-    return model
-
-embed_model = load_embedding_model()
-
-def load_cross_encoder():
-    try:
-        return CrossEncoder('models/ms-marco-MiniLM-L-6-v2')
-    except Exception:
-        return None
-
-cross_encoder = load_cross_encoder()
-
 # ============================================================
 # FONCTIONS DE BASE
 # ============================================================
 
 def generer_embedding(texte: str):
-    return embed_model.encode(texte).tolist()
+    return get_embedding_model().encode(texte).tolist()
 
 def recherche_rag(question_embedding, top_k=5):
     conn = get_db_connection()
@@ -133,9 +106,9 @@ RÉPONSE :
                 return "Je n'ai pas cette information."
             return texte
         else:
-            return f"Erreur Ollama : {reponse.status_code} - {reponse.text}"
-    except Exception as e:
-        return f"Erreur lors de l'appel LLM : {e}"
+            return "Je ne peux pas générer une réponse pour le moment."
+    except Exception:
+        return "Je ne peux pas générer une réponse pour le moment."
 
 def verifier_reponse(reponse_llm, contexte):
     mots_interdits = ['inventé', 'selon mes connaissances', 'je pense', 'peut-être']
@@ -329,6 +302,7 @@ def reciprocal_rank_fusion(list_a, list_b, k: int = 60):
     return sorted(scores.items(), key=lambda x: x[1], reverse=True)
 
 def rerank(question: str, chunks: list, top_k: int = 5):
+    cross_encoder = get_cross_encoder()
     if not chunks or cross_encoder is None:
         return chunks[:top_k]
     pairs = [(question, chunk.get('reponse', '')) for chunk in chunks if chunk.get('reponse')]
@@ -369,6 +343,6 @@ RÉPONSE:
         if reponse.status_code == 200:
             return reponse.json().get("response", "Je n'ai pas compris.")
         else:
-            return f"Erreur Ollama : {reponse.status_code}"
-    except Exception as e:
-        return f"Erreur LLM : {e}"
+            return "Je ne peux pas générer une réponse pour le moment."
+    except Exception:
+        return "Je ne peux pas générer une réponse pour le moment."

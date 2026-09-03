@@ -8,7 +8,8 @@ class Role(str, Enum):
     CITOYEN = "citoyen"
 
 
-LEGACY_MANAGER_ROLES = {"admin", "municipal", Role.GESTIONNAIRE.value}
+MANAGER_ROLES = {Role.GESTIONNAIRE.value, "admin", "municipal"}
+LEGACY_MANAGER_ROLES = MANAGER_ROLES
 PROFESSIONAL_ROLES = {
     Role.AGENT.value,
     Role.RAMASSEUR.value,
@@ -62,6 +63,7 @@ DOMESTIC_COLLECTION_STATES = {
     "confirmee",
     "manquee",
     "reprogrammee",
+    "annulee",
 }
 
 COLLECTION_TRANSITIONS = {
@@ -77,7 +79,15 @@ COLLECTION_TRANSITIONS = {
 
 
 def is_manager_role(role: str) -> bool:
-    return role in LEGACY_MANAGER_ROLES
+    return role in MANAGER_ROLES
+
+
+def is_agent_role(role: str, *, include_managers: bool = False) -> bool:
+    return role == Role.AGENT.value or (include_managers and is_manager_role(role))
+
+
+def is_collector_role(role: str) -> bool:
+    return role == Role.RAMASSEUR.value
 
 
 def can_transition(transitions: dict[str, set[str]], current: str, target: str) -> bool:

@@ -1,11 +1,7 @@
-import osmnx as ox
-import networkx as nx
-import numpy as np
-from ortools.constraint_solver import pywrapcp, routing_enums_pb2
-
 _graph = None
 
 def get_graph():
+    import osmnx as ox
     global _graph
     if _graph is None:
         print("Chargement du graphe OSM de Douala...")
@@ -16,6 +12,9 @@ def get_graph():
     return _graph
 
 def calculer_matrice_distances(points):
+    import networkx as nx
+    import numpy as np
+    import osmnx as ox
     G = get_graph()
     n = len(points)
     matrice = np.zeros((n, n))
@@ -34,6 +33,7 @@ def calculer_matrice_distances(points):
     return matrice
 
 def resoudre_vrp(matrice_distances, nb_vehicules=1, capacites=None, demandes=None):
+    from ortools.constraint_solver import pywrapcp, routing_enums_pb2
     n = len(matrice_distances)
     if n < 2:
         return None

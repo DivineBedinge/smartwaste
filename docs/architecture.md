@@ -2,7 +2,7 @@
 
 ## Architecture
 
-Le prototype est un monolithe FastAPI. `main.py` contient la majorité des routes et appelle PostgreSQL/PostGIS directement via `psycopg2`. `auth.py` porte l’authentification JWT. Les routeurs spécialisés sont dans `app/routers/`. Le frontend est constitué de pages HTML/JavaScript statiques dans `static/` et utilise Leaflet. Les modèles ONNX sont chargés localement; le chatbot utilise Redis, des embeddings, BM25, un reranker et un LLM local selon la configuration.
+Le prototype est un monolithe FastAPI. `main.py` contient la majorité des routes et appelle PostgreSQL/PostGIS directement via `psycopg2`. `auth.py` porte l’authentification JWT. Les routeurs spécialisés sont dans `app/routers/`. Le frontend est constitué de pages HTML/JavaScript statiques dans `static/` et utilise Leaflet. Les modèles ONNX, SentenceTransformer et CrossEncoder sont chargés à la première utilisation via `app/services/ai_runtime.py`; `SMARTWASTE_DISABLE_AI=1` active le mode de test dégradé sans poids IA.
 
 ## Acteurs et autorisations
 
@@ -23,7 +23,7 @@ La décision IA utilise `AUTO_ACCEPT_THRESHOLD = 0.80`. Une confiance égale ou 
 
 ## Collectes domestiques
 
-La migration prépare les plans, créneaux, abonnements et occurrences. Les états d’occurrence sont `programmee`, `affectee`, `en_route`, `arrivee`, `effectuee`, `confirmee`, `manquee` et `reprogrammee`. Un motif est requis pour `manquee` dans l’API ramasseur. La génération automatique d’occurrences, la disponibilité avancée des véhicules et les notifications push restent à implémenter.
+La migration prépare les plans, créneaux, abonnements et occurrences. Les états d’occurrence sont `programmee`, `affectee`, `en_route`, `arrivee`, `effectuee`, `confirmee`, `manquee`, `reprogrammee` et `annulee`. Un motif est requis pour `manquee` dans l’API ramasseur. La génération d’occurrences est déclenchée par le gestionnaire; sa planification automatique et la disponibilité avancée des véhicules restent à implémenter.
 
 ## Réclamations, incidents et suggestions
 
@@ -31,7 +31,7 @@ Les demandes transversales sont stockées dans `support_requests`. Elles sont vi
 
 ## Cartographie et temps réel
 
-OSRM fournit les routes lorsque l’appel externe réussit; OSMnx/NetworkX et OR-Tools sont présents pour le graphe et le VRP. Les appels externes ne sont pas encore centralisés dans un adaptateur unique et le suivi GPS n’a pas encore de limitation de fréquence ni de politique de rétention complète. Le WebSocket historique reste global et ne doit pas être présenté comme un canal privé sécurisé.
+OSRM fournit les routes lorsque l’appel externe réussit; OSMnx/NetworkX et OR-Tools sont présents pour le graphe et le VRP et sont importés à la demande. Le suivi GPS exige une mission active et limite la fréquence. Le WebSocket `/ws` authentifie le JWT via le sous-protocole `bearer` et limite les événements au destinataire ou au canal gestionnaire. Les notifications SQL et le polling restent la source fiable après reconnexion. Le service worker exclut toutes les routes `/api/` de son cache.
 
 ## Migrations
 

@@ -3,13 +3,15 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from ws_manager import manager
 from database import get_db_connection
 from app.services.live_tracking import get_all_agent_positions
+from core.security import decode_token
+from core.policy import is_manager_role
 
 router = APIRouter(prefix="/api/v1/gestionnaire", tags=["gestionnaire"])
 security = HTTPBearer()
 
 def check_admin(credentials: HTTPAuthorizationCredentials = Depends(security)):
     payload = decode_token(credentials.credentials)
-    if not payload or payload["role"] not in ["admin", "municipal"]:
+    if not payload or not is_manager_role(payload.get("role", "")):
         raise HTTPException(403, "Accès refusé")
     return payload
 
