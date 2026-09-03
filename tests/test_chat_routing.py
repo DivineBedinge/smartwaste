@@ -39,3 +39,10 @@ def test_greeting_bypasses_redis_database_and_models(monkeypatch):
     result = main._process_chatbot_ask("hey ça va ?", session_id="session-with-metal")
     assert result["intention"] == "greeting"
     assert "métal" not in result["reponse"].lower()
+
+
+def test_ai_disabled_returns_controlled_fallback(monkeypatch):
+    monkeypatch.setattr(main, "heavy_ai_disabled", lambda: True)
+    result = main._process_chatbot_ask("Comment trier une bouteille ?")
+    assert result["source"] == "degraded"
+    assert "indisponible" in result["reponse"]

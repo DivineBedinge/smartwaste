@@ -45,7 +45,7 @@ from app.routers.workflows import router as workflows_router
 from app.services.routing import get_route
 from app.services.notifications import create_notification
 from app.services.gps_tracking import PositionRateLimiter
-from app.services.ai_runtime import get_onnx_session, runtime_status
+from app.services.ai_runtime import get_onnx_session, heavy_ai_disabled, runtime_status
 from fastapi import APIRouter, Depends, HTTPException, status
 
 
@@ -1188,6 +1188,14 @@ def _process_chatbot_ask(
     simple_response = simple_chat_response(question)
     if simple_response is not None:
         return simple_response
+    if heavy_ai_disabled():
+        language = detecter_langue(question)
+        return {
+            "langue": language,
+            "source": "degraded",
+            "intention": "waste_information",
+            "reponse": "The waste assistant is temporarily unavailable." if language == "en" else "L’assistant déchets est temporairement indisponible.",
+        }
 
     # ============================================================
     # 0. GESTION DE SESSION (mémoire)
@@ -1575,8 +1583,11 @@ def _process_chatbot_ask(
     # ============================================================
     # 10. FALLBACK : RAG simple
     # ============================================================
-    q_emb = generer_embedding(question_normalisee)
-    fiches = recherche_rag(q_emb, top_k=1)
+    try:
+        q_emb = generer_embedding(question_normalisee)
+        fiches = recherche_rag(q_emb, top_k=1)
+    except Exception:
+        fiches = []
     if fiches:
         fiche = fiches[0]
         sim = fiche["similarite"]
