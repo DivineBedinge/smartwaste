@@ -1,4 +1,10 @@
 DROP INDEX IF EXISTS uq_collection_occurrence_schedule;
+DROP INDEX IF EXISTS uq_reports_user_client_id;
+ALTER TABLE notifications DROP COLUMN IF EXISTS translation_params;
+ALTER TABLE notifications DROP COLUMN IF EXISTS translation_key;
+ALTER TABLE reports DROP COLUMN IF EXISTS address_text;
+ALTER TABLE reports DROP COLUMN IF EXISTS client_id;
+ALTER TABLE users DROP COLUMN IF EXISTS language_preference;
 ALTER TABLE users DROP COLUMN IF EXISTS available_weekdays;
 ALTER TABLE users DROP COLUMN IF EXISTS daily_capacity;
 ALTER TABLE users DROP COLUMN IF EXISTS service_area;
