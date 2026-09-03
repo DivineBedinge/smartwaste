@@ -8,7 +8,7 @@ ALTER TABLE reports ADD COLUMN IF NOT EXISTS client_id UUID;
 ALTER TABLE reports ADD COLUMN IF NOT EXISTS address_text TEXT;
 ALTER TABLE reports ADD COLUMN IF NOT EXISTS description TEXT;
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS translation_key VARCHAR(120);
-ALTER TABLE notifications ADD COLUMN IF NOT EXISTS translation_params JSONB NOT NULL DEFAULT '{}'::JSONB;
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS translation_params JSONB DEFAULT '{}'::JSONB;
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_collection_occurrence_schedule
     ON collection_occurrences(subscription_id, scheduled_for);

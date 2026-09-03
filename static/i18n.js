@@ -1,35 +1,27 @@
 const translations = {
-    fr: {
-        online: 'En ligne', offline: 'Hors connexion', sync: 'Synchroniser maintenant',
-        pendingReports: 'Signalements en attente', noPendingReports: 'Aucun signalement local en attente.',
-        login: 'Se connecter', language: 'Langue', saved: 'Préférence enregistrée'
-    },
-    en: {
-        online: 'Online', offline: 'Offline', sync: 'Sync now',
-        pendingReports: 'Pending reports', noPendingReports: 'No local reports pending.',
-        login: 'Sign in', language: 'Language', saved: 'Preference saved'
-    }
+ fr: {
+  'common.language':'Langue','common.loading':'Chargement…','common.error':'Une erreur est survenue.','auth.login':'Se connecter','auth.email':'Email','auth.password':'Mot de passe',
+  'collector.calendar.title':'Calendrier du ramasseur','collector.calendar.assigned':'Collectes affectées','collector.calendar.scope':'Seules les occurrences affectées à votre compte sont affichées.','collector.calendar.empty':'Aucune collecte affectée.','collector.account_required':'Compte ramasseur requis',
+  'collection.label':'Collecte #{collection_id}','collection.scheduled':'Collecte programmée','collection.address':'Adresse','collection.slot':'Créneau','collection.status':'Statut','collection.navigation':'Navigation','collection.next_step':'Prochaine étape','collection.distance':'Distance','collection.duration':'Durée','collection.eta':'ETA','collection.zone_unknown':'Zone non renseignée','collection.missed_reason':'Motif obligatoire',
+  'collection.status.programmee':'Programmée','collection.status.affectee':'Affectée','collection.status.en_route':'En route','collection.status.arrivee':'Arrivée','collection.status.effectuee':'Effectuée','collection.status.confirmee':'Confirmée','collection.status.manquee':'Manquée','collection.status.reprogrammee':'Reprogrammée','collection.status.annulee':'Annulée',
+  'collection.action.en_route':'Démarrer le trajet','collection.action.arrivee':'Confirmer l’arrivée','collection.action.effectuee':'Confirmer la collecte','collection.action.manquee':'Collecte manquée','support.claims':'Réclamations','support.suggestions':'Suggestions',
+  'notifications.title':'Notifications','notifications.open':'Ouvrir les notifications','notifications.mark_read':'Marquer comme lu','notifications.mark_all_read':'Tout marquer comme lu','notifications.empty':'Aucune notification.','notifications.loading':'Chargement des notifications…','notifications.error':'Impossible de charger les notifications.',
+  'notification.report_received.title':'Signalement reçu','notification.report_received':'Votre signalement #{report_id} a été enregistré.','notification.collection_assigned.title':'Nouvelle collecte affectée','notification.collection_assigned':'La collecte #{collection_id} vous a été affectée pour le {scheduled_for}.','notification.collection_rescheduled.title':'Collecte reprogrammée','notification.collection_rescheduled':'La collecte #{collection_id} a été reprogrammée au {scheduled_for}.','notification.collection_cancelled.title':'Collecte annulée','notification.collection_cancelled':'La collecte #{collection_id} a été annulée.','notification.collection_reminder.title':'Rappel de collecte','notification.collection_reminder':'Rappel : collecte #{collection_id} prévue le {scheduled_for}.','notification.collection_missed.title':'Collecte manquée enregistrée','notification.collection_missed':'La collecte #{collection_id} a été enregistrée comme manquée. Motif : {reason}.','notification.support_response.title':'Réponse à votre réclamation','notification.support_response':'Une réponse a été apportée à votre réclamation « {subject} ».',
+  online:'En ligne',offline:'Hors connexion',sync:'Synchroniser maintenant',pendingReports:'Signalements en attente',noPendingReports:'Aucun signalement local en attente.',login:'Se connecter',language:'Langue',saved:'Préférence enregistrée'
+ },
+ en: {
+  'common.language':'Language','common.loading':'Loading…','common.error':'An error occurred.','auth.login':'Sign in','auth.email':'Email','auth.password':'Password',
+  'collector.calendar.title':'Collector calendar','collector.calendar.assigned':'Assigned collections','collector.calendar.scope':'Only collections assigned to your account are shown.','collector.calendar.empty':'No assigned collections.','collector.account_required':'Collector account required',
+  'collection.label':'Collection #{collection_id}','collection.scheduled':'Scheduled collection','collection.address':'Address','collection.slot':'Time slot','collection.status':'Status','collection.navigation':'Navigation','collection.next_step':'Next step','collection.distance':'Distance','collection.duration':'Duration','collection.eta':'ETA','collection.zone_unknown':'Area not provided','collection.missed_reason':'A reason is required',
+  'collection.status.programmee':'Scheduled','collection.status.affectee':'Assigned','collection.status.en_route':'On the way','collection.status.arrivee':'Arrived','collection.status.effectuee':'Completed','collection.status.confirmee':'Confirmed','collection.status.manquee':'Missed','collection.status.reprogrammee':'Rescheduled','collection.status.annulee':'Cancelled',
+  'collection.action.en_route':'Start route','collection.action.arrivee':'Confirm arrival','collection.action.effectuee':'Confirm collection','collection.action.manquee':'Missed collection','support.claims':'Claims','support.suggestions':'Suggestions',
+  'notifications.title':'Notifications','notifications.open':'Open notifications','notifications.mark_read':'Mark as read','notifications.mark_all_read':'Mark all as read','notifications.empty':'No notifications.','notifications.loading':'Loading notifications…','notifications.error':'Unable to load notifications.',
+  'notification.report_received.title':'Report received','notification.report_received':'Your report #{report_id} has been recorded.','notification.collection_assigned.title':'New collection assigned','notification.collection_assigned':'Collection #{collection_id} was assigned to you for {scheduled_for}.','notification.collection_rescheduled.title':'Collection rescheduled','notification.collection_rescheduled':'Collection #{collection_id} was rescheduled to {scheduled_for}.','notification.collection_cancelled.title':'Collection cancelled','notification.collection_cancelled':'Collection #{collection_id} was cancelled.','notification.collection_reminder.title':'Collection reminder','notification.collection_reminder':'Reminder: collection #{collection_id} is scheduled for {scheduled_for}.','notification.collection_missed.title':'Missed collection recorded','notification.collection_missed':'Collection #{collection_id} was recorded as missed. Reason: {reason}.','notification.support_response.title':'Response to your claim','notification.support_response':'A response was posted for your claim “{subject}”.',
+  online:'Online',offline:'Offline',sync:'Sync now',pendingReports:'Pending reports',noPendingReports:'No local reports pending.',login:'Sign in',language:'Language',saved:'Preference saved'
+ }
 };
-
-function translatePage(language) {
-    const selected = translations[language] || translations.fr;
-    document.documentElement.lang = translations[language] ? language : 'fr';
-    document.querySelectorAll('[data-i18n]').forEach(element => {
-        const value = selected[element.dataset.i18n] || translations.fr[element.dataset.i18n];
-        if (value) element.textContent = value;
-    });
-    localStorage.setItem('language_preference', document.documentElement.lang);
-}
-
-async function persistLanguage(language, token) {
-    translatePage(language);
-    if (!token) return;
-    await fetch('/api/v1/auth/me/language', {
-        method: 'PATCH', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`},
-        body: JSON.stringify({language_preference: language})
-    });
-}
-
-window.translatePage = translatePage;
-window.persistLanguage = persistLanguage;
-translatePage(localStorage.getItem('language_preference') || 'fr');
+function normalizeLanguage(language){return language==='en'?'en':'fr';}
+function translate(key,params={},language=document.documentElement.lang){const lang=normalizeLanguage(language);const template=translations[lang][key]||translations.fr[key];if(!template)return null;return template.replace(/\{([a-zA-Z0-9_]+)\}/g,(_,name)=>Object.prototype.hasOwnProperty.call(params,name)?String(params[name]):'');}
+function translatePage(language){const lang=normalizeLanguage(language);document.documentElement.lang=lang;document.querySelectorAll('[data-i18n]').forEach(element=>{const value=translate(element.dataset.i18n,{},lang);if(value!==null)element.textContent=value;});document.querySelectorAll('[data-language-select]').forEach(select=>{select.value=lang;});localStorage.setItem('language_preference',lang);document.dispatchEvent(new CustomEvent('languagechange',{detail:{language:lang}}));return lang;}
+async function persistLanguage(language,token){const lang=translatePage(language);if(!token)return lang;const response=await fetch('/api/v1/auth/me/language',{method:'PATCH',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({language_preference:lang})});if(!response.ok)throw new Error(translate('common.error',{},lang));return lang;}
+window.translations=translations;window.translate=translate;window.translatePage=translatePage;window.persistLanguage=persistLanguage;translatePage(localStorage.getItem('language_preference')||'fr');

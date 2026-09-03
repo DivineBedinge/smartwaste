@@ -6,6 +6,7 @@ import psycopg2.extras
 from core.security import hash_password, verify_password, create_access_token, decode_token
 from database import get_db_connection
 from core.policy import Role
+from core.config import DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -15,7 +16,7 @@ class UserRegister(BaseModel):
     email: str
     password: str
     arrondissement: str = None
-    language_preference: str = "fr"
+    language_preference: str = DEFAULT_LANGUAGE
 
 
 class LanguageUpdate(BaseModel):
@@ -40,7 +41,7 @@ def register(user: UserRegister):
     hashed = hash_password(user.password)
     
     role = Role.CITOYEN.value
-    if user.language_preference not in {"fr", "en"}:
+    if user.language_preference not in SUPPORTED_LANGUAGES:
         raise HTTPException(422, "Langue invalide")
     cur.execute("""
         INSERT INTO users (email, password_hash, role, arrondissement, language_preference)
@@ -129,7 +130,7 @@ def update_language(
     payload: LanguageUpdate,
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
-    if payload.language_preference not in {"fr", "en"}:
+    if payload.language_preference not in SUPPORTED_LANGUAGES:
         raise HTTPException(422, "Langue invalide")
     token_payload = decode_token(credentials.credentials)
     if not token_payload:

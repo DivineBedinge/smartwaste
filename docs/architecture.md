@@ -35,7 +35,7 @@ OSRM fournit les routes lorsque l’appel externe réussit; OSMnx/NetworkX et OR
 
 ## Migrations
 
-Les migrations additives sont `migrations/001_workflows.sql` et `migrations/002_collector_operations.sql`. Elles conservent les données existantes et sont suivies par `schema_migrations`. Exécution : `python migrate_schema.py`. Les réversions correspondantes doivent être utilisées uniquement après sauvegarde explicite.
+Les migrations additives sont `migrations/001_workflows.sql`, `migrations/002_collector_operations.sql` et `migrations/003_collection_cancellation.sql`. Elles conservent les données existantes et sont suivies par `schema_migrations`. La troisième ajoute l'annulation des collectes et rend les paramètres de traduction facultatifs pour les notifications historiques. Exécution : `python migrate_schema.py`. Les réversions correspondantes doivent être utilisées uniquement après sauvegarde explicite.
 
 `test.sql` est le schéma historique de référence pour une base neuve. Il contient encore des seeds et des requêtes de diagnostic historiques; les migrations servent à mettre à niveau une base existante. Le bootstrap de `test.sql` est validé sur PostgreSQL/PostGIS local.
 

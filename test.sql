@@ -177,7 +177,7 @@ CREATE TABLE IF NOT EXISTS collection_occurrences (
     collector_id INTEGER REFERENCES users(id),
     scheduled_for TIMESTAMPTZ NOT NULL,
     status VARCHAR(32) NOT NULL DEFAULT 'programmee'
-        CHECK (status IN ('programmee', 'affectee', 'en_route', 'arrivee', 'effectuee', 'confirmee', 'manquee', 'reprogrammee')),
+        CHECK (status IN ('programmee', 'affectee', 'en_route', 'arrivee', 'effectuee', 'confirmee', 'manquee', 'reprogrammee', 'annulee')),
     missed_reason VARCHAR(64),
     rescheduled_to INTEGER REFERENCES collection_occurrences(id),
     started_at TIMESTAMPTZ,
@@ -212,7 +212,7 @@ CREATE TABLE IF NOT EXISTS notifications (
     title VARCHAR(200) NOT NULL,
     content TEXT NOT NULL,
     translation_key VARCHAR(120),
-    translation_params JSONB NOT NULL DEFAULT '{}'::JSONB,
+    translation_params JSONB DEFAULT '{}'::JSONB,
     link VARCHAR(2048),
     is_read BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

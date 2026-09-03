@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -7,6 +8,7 @@ from pydantic import BaseModel, Field
 from core.policy import COLLECTION_TRANSITIONS, can_transition, is_manager_role
 from app.services.collections import generate_database_occurrences
 from app.services.gps_retention import purge_old_positions
+from app.services.notifications import create_notification
 from core.security import decode_token
 from database import get_db_connection
 
@@ -84,6 +86,27 @@ class ProfessionalStatusUpdate(BaseModel):
 class OccurrenceGenerationRequest(BaseModel):
     start: str
     until: str
+
+
+class CollectionScheduleUpdate(BaseModel):
+    scheduled_for: datetime
+
+
+class SupportResponseUpdate(BaseModel):
+    response: str = Field(min_length=1, max_length=10000)
+
+
+def notify_collection(conn, recipient_id: int, occurrence_id: int, event: str, title: str, content: str, **params):
+    return create_notification(
+        conn,
+        recipient_id,
+        event,
+        title,
+        content,
+        f"/ramasseur#collecte-{occurrence_id}",
+        f"notification.{event}",
+        {"collection_id": occurrence_id, **params},
+    )
 
 
 @router.post("/abonnements-domestiques")
@@ -239,10 +262,12 @@ def list_my_support_requests(user: dict = Depends(current_user)):
 @router.get("/notifications")
 def list_notifications(user: dict = Depends(current_user)):
     conn = get_db_connection()
-    cur = conn.cursor()
+    from psycopg2.extras import RealDictCursor
+    cur = conn.cursor(cursor_factory=RealDictCursor)
     cur.execute(
         """
-        SELECT id, notification_type, title, content, link, is_read, created_at
+        SELECT id, notification_type, title, content, link,
+               translation_key, translation_params, is_read, created_at
         FROM notifications
         WHERE recipient_id = %s
         ORDER BY created_at DESC
@@ -322,6 +347,40 @@ def list_support_requests(user: dict = Depends(require_manager)):
     cur.close()
     conn.close()
     return rows
+
+
+@router.patch("/gestionnaire/demandes-support/{request_id}/reponse")
+def respond_to_support_request(
+    request_id: int,
+    payload: SupportResponseUpdate,
+    user: dict = Depends(require_manager),
+):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE support_requests
+        SET manager_response = %s, status = 'resolue', updated_at = NOW()
+        WHERE id = %s
+        RETURNING id, author_id, subject
+        """,
+        (payload.response, request_id),
+    )
+    result = cur.fetchone()
+    if not result:
+        cur.close()
+        conn.close()
+        raise HTTPException(404, "Demande non trouvée")
+    create_notification(
+        conn, result[1], "support_response", "Réponse à votre réclamation",
+        f"Une réponse a été apportée à « {result[2]} ».",
+        f"/ramasseur#reclamation-{result[0]}", "notification.support_response",
+        {"request_id": result[0], "subject": result[2]},
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+    return {"id": result[0], "status": "resolue"}
 
 
 @router.get("/gestionnaire/plans")
@@ -526,6 +585,12 @@ def assign_collection(
         (collector[0], occurrence_id),
     )
     result = cur.fetchone()
+    notify_collection(
+        conn, collector[0], occurrence_id, "collection_assigned",
+        "Nouvelle collecte affectée",
+        f"La collecte #{occurrence_id} vous a été affectée.",
+        scheduled_for=scheduled_date.isoformat(), service_area=service_area or "",
+    )
     conn.commit()
     cur.close()
     conn.close()
@@ -576,7 +641,89 @@ def update_collector_collection(
         ),
     )
     result = cur.fetchone()
+    if payload.status == "manquee":
+        notify_collection(
+            conn, user["user_id"], occurrence_id, "collection_missed",
+            "Collecte manquée enregistrée",
+            f"La collecte #{occurrence_id} a été enregistrée comme manquée.",
+            reason=payload.missed_reason,
+        )
     conn.commit()
     cur.close()
     conn.close()
     return {"id": result[0], "status": result[1]}
+
+
+@router.patch("/gestionnaire/collectes/{occurrence_id}/reprogrammer")
+def reschedule_collection(
+    occurrence_id: int,
+    payload: CollectionScheduleUpdate,
+    user: dict = Depends(require_manager),
+):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE collection_occurrences
+        SET scheduled_for = %s, status = 'reprogrammee', updated_at = NOW()
+        WHERE id = %s AND status NOT IN ('effectuee', 'confirmee', 'annulee')
+        RETURNING id, collector_id, scheduled_for
+        """,
+        (payload.scheduled_for, occurrence_id),
+    )
+    result = cur.fetchone()
+    if not result:
+        cur.close(); conn.close()
+        raise HTTPException(404, "Collecte modifiable non trouvée")
+    if result[1]:
+        notify_collection(
+            conn, result[1], result[0], "collection_rescheduled",
+            "Collecte reprogrammée", f"La collecte #{result[0]} a été reprogrammée.",
+            scheduled_for=result[2].isoformat(),
+        )
+    conn.commit(); cur.close(); conn.close()
+    return {"id": result[0], "status": "reprogrammee", "scheduled_for": result[2]}
+
+
+@router.patch("/gestionnaire/collectes/{occurrence_id}/annuler")
+def cancel_collection(occurrence_id: int, user: dict = Depends(require_manager)):
+    conn = get_db_connection(); cur = conn.cursor()
+    cur.execute(
+        """UPDATE collection_occurrences SET status = 'annulee', updated_at = NOW()
+           WHERE id = %s AND status NOT IN ('effectuee', 'confirmee', 'annulee')
+           RETURNING id, collector_id""",
+        (occurrence_id,),
+    )
+    result = cur.fetchone()
+    if not result:
+        cur.close(); conn.close()
+        raise HTTPException(404, "Collecte annulable non trouvée")
+    if result[1]:
+        notify_collection(
+            conn, result[1], result[0], "collection_cancelled",
+            "Collecte annulée", f"La collecte #{result[0]} a été annulée.",
+        )
+    conn.commit(); cur.close(); conn.close()
+    return {"id": result[0], "status": "annulee"}
+
+
+@router.post("/gestionnaire/collectes/{occurrence_id}/rappel")
+def remind_collection(occurrence_id: int, user: dict = Depends(require_manager)):
+    conn = get_db_connection(); cur = conn.cursor()
+    cur.execute(
+        """SELECT id, collector_id, scheduled_for FROM collection_occurrences
+           WHERE id = %s AND collector_id IS NOT NULL
+             AND status IN ('affectee', 'en_route', 'arrivee', 'reprogrammee')""",
+        (occurrence_id,),
+    )
+    result = cur.fetchone()
+    if not result:
+        cur.close(); conn.close()
+        raise HTTPException(404, "Collecte affectée non trouvée")
+    notify_collection(
+        conn, result[1], result[0], "collection_reminder",
+        "Rappel de collecte", f"Rappel pour la collecte #{result[0]}.",
+        scheduled_for=result[2].isoformat(),
+    )
+    conn.commit(); cur.close(); conn.close()
+    return {"id": result[0], "reminder_sent": True}

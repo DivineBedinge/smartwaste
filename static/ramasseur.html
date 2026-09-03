@@ -1,88 +1,22 @@
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>SmartWaste CM+ - Ramasseur</title>
-    <style>
-        body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #17324d; }
-        form, article { border: 1px solid #d6e0e8; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
-        input, button, select { padding: .65rem; margin: .25rem 0; max-width: 100%; }
-        button { cursor: pointer; background: #0b7285; color: white; border: 0; border-radius: 4px; }
-        button.missed { background: #c92a2a; }
-        .muted { color: #5c6b73; }
-    </style>
-</head>
-<body>
-    <h1>Calendrier du ramasseur</h1>
-    <form id="login-form">
-        <label>Email <input id="email" type="email" required></label>
-        <label>Mot de passe <input id="password" type="password" required></label>
-        <button type="submit">Se connecter</button>
-        <p id="login-error" role="alert"></p>
-    </form>
-    <section id="calendar" hidden>
-        <h2>Collectes affectées</h2>
-        <p class="muted">Seules les occurrences affectées à votre compte sont affichées.</p>
-        <div id="collections"></div>
-    </section>
-    <script>
-        const loginForm = document.getElementById('login-form');
-        const calendar = document.getElementById('calendar');
-        const collections = document.getElementById('collections');
-        const error = document.getElementById('login-error');
-        let token = localStorage.getItem('token') || '';
-
-        async function api(path, options = {}) {
-            const response = await fetch(path, {
-                ...options,
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(options.headers || {}) }
-            });
-            const body = await response.json().catch(() => ({}));
-            if (!response.ok) throw new Error(body.detail || 'Erreur API');
-            return body;
-        }
-
-        async function loadCollections() {
-            collections.textContent = 'Chargement...';
-            try {
-                const rows = await api('/api/v1/ramasseur/collectes');
-                collections.replaceChildren(...rows.map(row => {
-                    const article = document.createElement('article');
-                    article.innerHTML = `<strong>Collecte #${row[0]}</strong><p>${new Date(row[2]).toLocaleString()} - ${row[6] || 'Zone non renseignée'}</p><p>Statut : ${row[3]}</p>`;
-                    if (['affectee', 'en_route', 'arrivee'].includes(row[3])) {
-                        for (const [status, label] of [['en_route', 'En route'], ['arrivee', 'Arrivé'], ['effectuee', 'Effectuée']]) {
-                            const button = document.createElement('button');
-                            button.textContent = label;
-                            button.onclick = async () => { await updateStatus(row[0], status); };
-                            article.append(button);
-                        }
-                        const missed = document.createElement('button');
-                        missed.textContent = 'Collecte manquée';
-                        missed.className = 'missed';
-                        missed.onclick = async () => { const reason = prompt('Motif obligatoire'); if (reason) await updateStatus(row[0], 'manquee', reason); };
-                        article.append(missed);
-                    }
-                    return article;
-                }));
-            } catch (exception) { collections.textContent = exception.message; }
-        }
-
-        async function updateStatus(id, status, missed_reason = null) {
-            await api(`/api/v1/ramasseur/collectes/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status, missed_reason }) });
-            await loadCollections();
-        }
-
-        loginForm.addEventListener('submit', async event => {
-            event.preventDefault();
-            error.textContent = '';
-            try {
-                const response = await fetch('/api/v1/auth/login', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ email: email.value, password: password.value }) });
-                const body = await response.json();
-                if (!response.ok || body.role !== 'ramasseur') throw new Error('Compte ramasseur requis');
-                token = body.access_token; localStorage.setItem('token', token); calendar.hidden = false; await loadCollections();
-            } catch (exception) { error.textContent = exception.message; }
-        });
-    </script>
-</body>
-</html>
+<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SmartWaste CM+ - Ramasseur</title>
+<style>body{font-family:system-ui,sans-serif;max-width:900px;margin:2rem auto;padding:0 1rem;color:#17324d}form,article,#notification-center{border:1px solid #d6e0e8;border-radius:8px;padding:1rem;margin:1rem 0}input,button,select{padding:.65rem;margin:.25rem 0;max-width:100%}button{cursor:pointer;background:#0b7285;color:#fff;border:0;border-radius:4px}.missed{background:#c92a2a}.muted{color:#5c6b73}.notification{border-left:4px solid #0b7285}.unread{background:#eef9fb}.badge{border-radius:999px;background:#c92a2a;padding:.1rem .45rem}</style>
+<script src="/static/i18n.js" defer></script></head><body>
+<h1 data-i18n="collector.calendar.title">Calendrier du ramasseur</h1><div><label for="language" data-i18n="common.language">Langue</label> <select id="language" data-language-select><option value="fr">FR</option><option value="en">EN</option></select></div>
+<form id="login-form"><label><span data-i18n="auth.email">Email</span> <input id="email" type="email" required></label><label><span data-i18n="auth.password">Mot de passe</span> <input id="password" type="password" required></label><button data-i18n="auth.login">Se connecter</button><p id="login-error" role="alert"></p></form>
+<nav id="authenticated-actions" hidden><button id="notification-toggle"><span data-i18n="notifications.open">Ouvrir les notifications</span> <span id="notification-count" class="badge">0</span></button></nav>
+<section id="notification-center" hidden><h2 data-i18n="notifications.title">Notifications</h2><button id="mark-all-read" data-i18n="notifications.mark_all_read">Tout marquer comme lu</button><div id="notification-list"></div></section>
+<section id="calendar" hidden><h2 data-i18n="collector.calendar.assigned">Collectes affectées</h2><p class="muted" data-i18n="collector.calendar.scope">Seules les occurrences affectées à votre compte sont affichées.</p><div id="collections"></div></section>
+<script>
+const loginForm=document.getElementById('login-form'),calendar=document.getElementById('calendar'),collections=document.getElementById('collections'),loginError=document.getElementById('login-error'),notificationList=document.getElementById('notification-list'),notificationCount=document.getElementById('notification-count');let token=localStorage.getItem('token')||'',collectionRows=[],notificationRows=[],notificationRefresh=null;
+async function api(path,options={}){const response=await fetch(path,{...options,headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`,...(options.headers||{})}}),body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(body.detail||translate('common.error'));return body;}
+function node(tag,text,className){const element=document.createElement(tag);if(text!==undefined)element.textContent=text;if(className)element.className=className;return element;}
+function renderCollections(){collections.replaceChildren();if(!collectionRows.length){collections.append(node('p',translate('collector.calendar.empty'),'muted'));return;}collectionRows.forEach(row=>{const article=node('article');article.id=`collecte-${Number(row[0])}`;article.append(node('strong',translate('collection.label',{collection_id:row[0]})),node('p',`${new Date(row[2]).toLocaleString(document.documentElement.lang)} — ${row[7]||translate('collection.zone_unknown')}`),node('p',`${translate('collection.status')} : ${translate(`collection.status.${row[3]}`)||row[3]}`));if(['affectee','en_route','arrivee'].includes(row[3])){[['en_route','collection.action.en_route'],['arrivee','collection.action.arrivee'],['effectuee','collection.action.effectuee']].forEach(([status,key])=>{const button=node('button',translate(key));button.addEventListener('click',()=>updateStatus(row[0],status));article.append(button);});const missed=node('button',translate('collection.action.manquee'),'missed');missed.addEventListener('click',async()=>{const reason=prompt(translate('collection.missed_reason'));if(reason)await updateStatus(row[0],'manquee',reason);});article.append(missed);}collections.append(article);});}
+async function loadCollections(){collections.textContent=translate('common.loading');try{collectionRows=await api('/api/v1/ramasseur/collectes');renderCollections();}catch(error){collections.textContent=error.message;}}
+async function updateStatus(id,status,missed_reason=null){await api(`/api/v1/ramasseur/collectes/${id}/status`,{method:'PATCH',body:JSON.stringify({status,missed_reason})});await Promise.all([loadCollections(),loadNotifications()]);}
+function notificationText(item){return item.translation_key?(translate(item.translation_key,item.translation_params||{})||item.content):item.content;}
+function renderNotifications(){notificationList.replaceChildren();if(!notificationRows.length){notificationList.append(node('p',translate('notifications.empty'),'muted'));return;}notificationRows.forEach(item=>{const article=node('article',undefined,`notification${item.is_read?'':' unread'}`),title=item.translation_key?(translate(`${item.translation_key}.title`,item.translation_params||{})||item.title):item.title;article.append(node('strong',title),node('p',notificationText(item)),node('time',new Date(item.created_at).toLocaleString(document.documentElement.lang),'muted'));if(item.link&&/^\/ramasseur(?:#[-a-zA-Z0-9]+)?$/.test(item.link)){const link=node('a',translate('collection.navigation'));link.href=item.link;article.append(link);}if(!item.is_read){const button=node('button',translate('notifications.mark_read'));button.addEventListener('click',async()=>{await api(`/api/v1/notifications/${item.id}/read`,{method:'PATCH'});await loadNotifications();});article.append(button);}notificationList.append(article);});}
+async function loadNotifications(){notificationList.textContent=translate('notifications.loading');try{notificationRows=await api('/api/v1/notifications');renderNotifications();const count=await api('/api/v1/notifications/unread-count');notificationCount.textContent=String(count.count);}catch(_){notificationList.textContent=translate('notifications.error');}}
+async function activateAccount(language){translatePage(language||localStorage.getItem('language_preference')||'fr');loginForm.hidden=true;calendar.hidden=false;document.getElementById('authenticated-actions').hidden=false;await Promise.all([loadCollections(),loadNotifications()]);if(!notificationRefresh)notificationRefresh=setInterval(loadNotifications,30000);}
+loginForm.addEventListener('submit',async event=>{event.preventDefault();loginError.textContent='';try{const response=await fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:document.getElementById('email').value,password:document.getElementById('password').value})}),body=await response.json();if(!response.ok||body.role!=='ramasseur')throw new Error(translate('collector.account_required'));token=body.access_token;localStorage.setItem('token',token);await activateAccount(body.language_preference);}catch(error){loginError.textContent=error.message;}});
+document.getElementById('language').addEventListener('change',event=>persistLanguage(event.target.value,token).then(()=>{renderCollections();renderNotifications();}).catch(error=>{loginError.textContent=error.message;}));document.getElementById('notification-toggle').addEventListener('click',()=>{const center=document.getElementById('notification-center');center.hidden=!center.hidden;if(!center.hidden)loadNotifications();});document.getElementById('mark-all-read').addEventListener('click',async()=>{await api('/api/v1/notifications/read-all',{method:'PATCH'});await loadNotifications();});document.addEventListener('languagechange',()=>{if(collectionRows.length)renderCollections();if(notificationRows.length)renderNotifications();});window.addEventListener('DOMContentLoaded',async()=>{translatePage(localStorage.getItem('language_preference')||'fr');if(!token)return;try{const account=await api('/api/v1/auth/me');if(account.role!=='ramasseur')throw new Error();await activateAccount(account.language_preference);}catch(_){token='';localStorage.removeItem('token');}});
+</script></body></html>
