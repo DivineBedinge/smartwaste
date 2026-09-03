@@ -70,6 +70,17 @@ class CollectorAssignment(BaseModel):
     collector_id: int
 
 
+class PlanCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    frequency: str
+    price: float = Field(ge=0)
+    service_area: Optional[str] = Field(default=None, max_length=120)
+
+
+class ProfessionalStatusUpdate(BaseModel):
+    active: bool
+
+
 class OccurrenceGenerationRequest(BaseModel):
     start: str
     until: str
@@ -305,6 +316,116 @@ def list_support_requests(user: dict = Depends(require_manager)):
                status, assigned_to, manager_response, created_at, updated_at
         FROM support_requests
         ORDER BY created_at DESC
+        """
+    )
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rows
+
+
+@router.get("/gestionnaire/plans")
+def list_plans(user: dict = Depends(require_manager)):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT id, name, frequency, price, service_area, active FROM subscription_plans ORDER BY id")
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rows
+
+
+@router.post("/gestionnaire/plans")
+def create_plan(payload: PlanCreate, user: dict = Depends(require_manager)):
+    if payload.frequency not in {"hebdomadaire", "bimensuelle", "mensuelle"}:
+        raise HTTPException(422, "Fréquence invalide")
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO subscription_plans (name, frequency, price, service_area)
+        VALUES (%s, %s, %s, %s) RETURNING id, name, frequency, price, service_area, active
+        """,
+        (payload.name, payload.frequency, payload.price, payload.service_area),
+    )
+    result = cur.fetchone()
+    conn.commit()
+    cur.close()
+    conn.close()
+    return result
+
+
+@router.get("/gestionnaire/professionnels")
+def list_professionals(user: dict = Depends(require_manager)):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT id, email, role, arrondissement, active, service_area,
+               daily_capacity, available_weekdays
+        FROM users WHERE role IN ('agent', 'ramasseur') ORDER BY role, id
+        """
+    )
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rows
+
+
+@router.patch("/gestionnaire/professionnels/{professional_id}/status")
+def update_professional_status(
+    professional_id: int,
+    payload: ProfessionalStatusUpdate,
+    user: dict = Depends(require_manager),
+):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE users SET active = %s
+        WHERE id = %s AND role IN ('agent', 'ramasseur')
+        RETURNING id, role, active
+        """,
+        (payload.active, professional_id),
+    )
+    result = cur.fetchone()
+    conn.commit()
+    cur.close()
+    conn.close()
+    if not result:
+        raise HTTPException(404, "Professionnel non trouvé")
+    return {"id": result[0], "role": result[1], "active": result[2]}
+
+
+@router.get("/gestionnaire/collectes")
+def list_all_collections(user: dict = Depends(require_manager)):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT o.id, o.subscription_id, o.collector_id, o.scheduled_for, o.status,
+               o.missed_reason, s.user_id, s.service_area
+        FROM collection_occurrences o
+        JOIN domestic_subscriptions s ON s.id = o.subscription_id
+        ORDER BY o.scheduled_for
+        LIMIT 500
+        """
+    )
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rows
+
+
+@router.get("/gestionnaire/audit-logs")
+def list_audit_logs(user: dict = Depends(require_manager)):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT id, actor_id, actor_role, action, resource_type, resource_id,
+               old_value, new_value, reason, created_at
+        FROM audit_logs ORDER BY created_at DESC LIMIT 500
         """
     )
     rows = cur.fetchall()
