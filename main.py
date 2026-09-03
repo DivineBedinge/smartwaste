@@ -142,6 +142,9 @@ def require_agent(credentials: HTTPAuthorizationCredentials = Depends(security))
         raise HTTPException(403, "Accès refusé")
     return payload
 
+def is_manager(payload: dict) -> bool:
+    return payload.get("role") in ["admin", "municipal"]
+
 def require_auth(credentials: HTTPAuthorizationCredentials = Depends(security)):
     payload = decode_token(credentials.credentials)
     if not payload:
@@ -652,7 +655,7 @@ def reclasser_signalement(report_id: int, nouvelle_severite: str, user: dict = D
 def valider_signalement(report_id: int, user: dict = Depends(require_admin)):
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    cur.execute("SELECT status FROM reports WHERE id = %s", (report_id,))
+    cur.execute("SELECT status, agent_id FROM reports WHERE id = %s", (report_id,))
     report = cur.fetchone()
     if not report:
         raise HTTPException(404, "Signalement non trouvé")
@@ -672,12 +675,14 @@ def valider_signalement(report_id: int, user: dict = Depends(require_admin)):
 def prendre_en_charge(report_id: int, user: dict = Depends(require_agent)):
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    cur.execute("SELECT status FROM reports WHERE id = %s", (report_id,))
+    cur.execute("SELECT status, agent_id FROM reports WHERE id = %s", (report_id,))
     report = cur.fetchone()
     if not report:
         raise HTTPException(404, "Signalement non trouvé")
     if report["status"] != "valide":
         raise HTTPException(400, "Le signalement doit être 'valide'")
+    if user["role"] == "agent" and report["agent_id"] != user["user_id"]:
+        raise HTTPException(403, "Signalement non assigné à cet agent")
     cur.execute("""
         UPDATE reports SET status = 'en_cours', updated_at = NOW()
         WHERE id = %s RETURNING id, status
@@ -698,12 +703,14 @@ async def soumettre_preuve_traitement(
 ):
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    cur.execute("SELECT status FROM reports WHERE id = %s", (report_id,))
+    cur.execute("SELECT status, agent_id FROM reports WHERE id = %s", (report_id,))
     report = cur.fetchone()
     if not report:
         raise HTTPException(404, "Signalement non trouvé")
     if report["status"] != "en_cours":
         raise HTTPException(400, "Le signalement doit être 'en_cours'")
+    if user["role"] == "agent" and report["agent_id"] != user["user_id"]:
+        raise HTTPException(403, "Signalement non assigné à cet agent")
 
     image_bytes = await file.read()
     photo_preuve_base64 = base64.b64encode(image_bytes).decode('utf-8')
@@ -1615,10 +1622,11 @@ def tournees_en_cours(user: dict = Depends(require_agent)):
         FROM tours t
         LEFT JOIN users u ON u.id = t.agent_id
         LEFT JOIN reports r ON r.tournee_id = t.id
-        WHERE t.status IN ('planifiee', 'en_cours')
+                WHERE t.status IN ('planifiee', 'en_cours')
+                    AND (%s IN ('admin', 'municipal') OR t.agent_id = %s)
         GROUP BY t.id, u.arrondissement
         ORDER BY t.planned_date DESC
-    """)
+        """, (user["role"], user["user_id"]))
     rows = cur.fetchall()
     cur.close()
     conn.close()
@@ -1633,8 +1641,12 @@ def points_tournee(tournee_id: int, user: dict = Depends(require_agent)):
                ST_Y(geometry) AS lat, ST_X(geometry) AS lon
         FROM reports
         WHERE tournee_id = %s
+          AND (%s IN ('admin', 'municipal') OR EXISTS (
+              SELECT 1 FROM tours t
+              WHERE t.id = reports.tournee_id AND t.agent_id = %s
+          ))
         ORDER BY id
-    """, (tournee_id,))
+    """, (tournee_id, user["role"], user["user_id"]))
     rows = cur.fetchall()
     cur.close()
     conn.close()

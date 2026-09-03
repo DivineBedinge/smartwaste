@@ -5,6 +5,7 @@ import psycopg2
 import psycopg2.extras
 from core.security import hash_password, verify_password, create_access_token, decode_token
 from database import get_db_connection
+from core.policy import Role
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -13,7 +14,6 @@ security = HTTPBearer()
 class UserRegister(BaseModel):
     email: str
     password: str
-    role: str = "citoyen"
     arrondissement: str = None
 
 class UserLogin(BaseModel):
@@ -34,23 +34,24 @@ def register(user: UserRegister):
     
     hashed = hash_password(user.password)
     
+    role = Role.CITOYEN.value
     cur.execute("""
         INSERT INTO users (email, password_hash, role, arrondissement)
         VALUES (%s, %s, %s, %s)
         RETURNING id
-    """, (user.email, hashed, user.role, user.arrondissement))
+    """, (user.email, hashed, role, user.arrondissement))
     
     user_id = cur.fetchone()[0]
     conn.commit()
     cur.close()
     conn.close()
     
-    token = create_access_token(user_id, user.role)
+    token = create_access_token(user_id, role)
     
     return {
         "id": user_id,
         "email": user.email,
-        "role": user.role,
+        "role": role,
         "arrondissement": user.arrondissement,
         "access_token": token,
         "token_type": "bearer"

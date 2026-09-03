@@ -2,6 +2,7 @@ import jwt
 import hashlib
 import os
 import secrets
+import bcrypt
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -10,16 +11,18 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
 def hash_password(password: str) -> str:
-    salt = os.urandom(16).hex()
-    hashed = hashlib.sha256((salt + password).encode('utf-8')).hexdigest()
-    return f"{salt}${hashed}"
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     try:
-        salt, hash_value = hashed_password.split('$')
-        check_hash = hashlib.sha256((salt + plain_password).encode('utf-8')).hexdigest()
-        return check_hash == hash_value
-    except:
+        if hashed_password.startswith("$2"):
+            return bcrypt.checkpw(
+                plain_password.encode("utf-8"), hashed_password.encode("utf-8")
+            )
+        salt, hash_value = hashed_password.split("$")
+        check_hash = hashlib.sha256((salt + plain_password).encode("utf-8")).hexdigest()
+        return secrets.compare_digest(check_hash, hash_value)
+    except (ValueError, TypeError):
         return False
 
 def create_access_token(user_id: int, role: str, expires_delta: Optional[timedelta] = None):
