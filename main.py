@@ -15,6 +15,7 @@ import base64
 import json
 from PIL import Image
 import os
+from uuid import UUID
 from dotenv import load_dotenv
 from pydantic import BaseModel
 from database import get_db_connection
@@ -561,9 +562,16 @@ async def create_signalement(
     file: UploadFile = File(...),
     lat: float = Form(...),
     lon: float = Form(...),
+    client_id: str = Form(...),
+    description: Optional[str] = Form(None),
+    address_text: Optional[str] = Form(None),
     current_user: dict = Depends(require_auth)  # <-- AJOUT
 ):
     validate_coordinates(lat, lon)
+    try:
+        UUID(client_id)
+    except ValueError as exc:
+        raise HTTPException(422, "client_id doit être un UUID valide") from exc
     image_bytes = await read_validated_image(file)
     photo_base64 = base64.b64encode(image_bytes).decode('utf-8')
 
@@ -582,6 +590,15 @@ async def create_signalement(
 
     conn = get_db_connection()
     cur = conn.cursor()
+    cur.execute(
+        "SELECT id, status, severity, confidence, waste_type FROM reports WHERE user_id = %s AND client_id = %s",
+        (current_user["user_id"], client_id),
+    )
+    existing = cur.fetchone()
+    if existing:
+        cur.close()
+        conn.close()
+        return {"id": existing[0], "status": existing[1], "severity": existing[2], "confidence": existing[3], "type_dechet": existing[4], "duplicate": True}
 
     group_id = find_duplicate_group(lat, lon, type_dechet)
 
@@ -607,14 +624,15 @@ async def create_signalement(
         INSERT INTO reports (user_id, geometry, severity, confidence, status, photo_base64, waste_type,
                      is_primary, report_count, duplicate_group_id,
                      classification_source, classification_model_version, analyzed_at,
-                     human_review_required, initial_severity, final_severity)
+                                         human_review_required, initial_severity, final_severity, client_id, description, address_text)
         VALUES (%s, ST_SetSRID(ST_MakePoint(%s, %s), 4326), %s, %s, %s, %s, %s,
-            %s, %s, %s, %s, %s, NOW(), %s, %s, %s)
+                        %s, %s, %s, %s, %s, NOW(), %s, %s, %s, %s, %s, %s)
         RETURNING id
         """, (current_user["user_id"], lon, lat, severity, confidence, status, photo_base64, type_dechet,
           is_primary, report_count, duplicate_group_id, severity_decision.source, MODEL_VERSION,
           severity_decision.human_review_required, severity_decision.predicted_class,
-          None if severity_decision.human_review_required else severity_decision.predicted_class))
+                    None if severity_decision.human_review_required else severity_decision.predicted_class,
+                      client_id, description, address_text))
     report_id = cur.fetchone()[0]
 
     if is_primary:
@@ -633,6 +651,8 @@ async def create_signalement(
         "Signalement reçu",
         f"Votre signalement #{report_id} a été enregistré.",
         f"/citoyen#signalement-{report_id}",
+        "notification.report_received",
+        {"report_id": report_id},
     )
     conn.commit()
     cur.close()

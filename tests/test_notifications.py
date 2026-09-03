@@ -25,5 +25,5 @@ class Connection:
 
 def test_notification_writer_uses_recipient_and_metadata():
     conn = Connection()
-    assert create_notification(conn, 8, "report_received", "Reçu", "Signalement reçu", "/reports/4") == 17
-    assert conn.cursor_instance.executed[1] == (8, "report_received", "Reçu", "Signalement reçu", "/reports/4")
+    assert create_notification(conn, 8, "report_received", "Reçu", "Signalement reçu", "/reports/4", "notification.report_received", {"report_id": 4}) == 17
+    assert conn.cursor_instance.executed[1] == (8, "report_received", "Reçu", "Signalement reçu", "/reports/4", "notification.report_received", {"report_id": 4})

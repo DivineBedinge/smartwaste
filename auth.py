@@ -15,6 +15,11 @@ class UserRegister(BaseModel):
     email: str
     password: str
     arrondissement: str = None
+    language_preference: str = "fr"
+
+
+class LanguageUpdate(BaseModel):
+    language_preference: str
 
 class UserLogin(BaseModel):
     email: str
@@ -35,11 +40,13 @@ def register(user: UserRegister):
     hashed = hash_password(user.password)
     
     role = Role.CITOYEN.value
+    if user.language_preference not in {"fr", "en"}:
+        raise HTTPException(422, "Langue invalide")
     cur.execute("""
-        INSERT INTO users (email, password_hash, role, arrondissement)
-        VALUES (%s, %s, %s, %s)
+        INSERT INTO users (email, password_hash, role, arrondissement, language_preference)
+        VALUES (%s, %s, %s, %s, %s)
         RETURNING id
-    """, (user.email, hashed, role, user.arrondissement))
+    """, (user.email, hashed, role, user.arrondissement, user.language_preference))
     
     user_id = cur.fetchone()[0]
     conn.commit()
@@ -53,6 +60,7 @@ def register(user: UserRegister):
         "email": user.email,
         "role": role,
         "arrondissement": user.arrondissement,
+        "language_preference": user.language_preference,
         "access_token": token,
         "token_type": "bearer"
     }
@@ -64,7 +72,7 @@ def login(user: UserLogin):
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     
     cur.execute("""
-        SELECT id, email, password_hash, role, arrondissement 
+        SELECT id, email, password_hash, role, arrondissement, language_preference
         FROM users 
         WHERE email = %s
     """, (user.email,))
@@ -85,6 +93,7 @@ def login(user: UserLogin):
         "email": user_data["email"],
         "role": user_data["role"],
         "arrondissement": user_data["arrondissement"],
+        "language_preference": user_data["language_preference"],
         "access_token": token,
         "token_type": "bearer"
     }
@@ -101,7 +110,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute("""
-        SELECT id, email, role, arrondissement 
+        SELECT id, email, role, arrondissement, language_preference
         FROM users 
         WHERE id = %s
     """, (payload["user_id"],))
@@ -113,3 +122,28 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         raise HTTPException(401, "Utilisateur non trouvé")
     
     return user
+
+
+@router.patch("/me/language")
+def update_language(
+    payload: LanguageUpdate,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+):
+    if payload.language_preference not in {"fr", "en"}:
+        raise HTTPException(422, "Langue invalide")
+    token_payload = decode_token(credentials.credentials)
+    if not token_payload:
+        raise HTTPException(401, "Token invalide ou expiré")
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE users SET language_preference = %s WHERE id = %s RETURNING language_preference",
+        (payload.language_preference, token_payload["user_id"]),
+    )
+    result = cur.fetchone()
+    conn.commit()
+    cur.close()
+    conn.close()
+    if not result:
+        raise HTTPException(404, "Utilisateur non trouvé")
+    return {"language_preference": result[0]}

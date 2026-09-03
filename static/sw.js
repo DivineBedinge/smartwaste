@@ -1,26 +1,26 @@
-const CACHE_NAME = 'smartwaste-v1';
+const CACHE_NAME = 'smartwaste-v2';
 const urlsToCache = [
   '/',
   '/citoyen',
-  '/agent',
-  '/gestionnaire',
   '/static/citoyen.html',
-  '/static/agent.html',
-  '/static/gestionnaire.html',
-  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
-  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
+  '/static/offline.js',
+  '/static/i18n.js',
+  '/static/manifest.webmanifest'
 ];
 
 self.addEventListener('install', event => {
   event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then(cache => cache.addAll(urlsToCache))
+    caches.open(CACHE_NAME).then(async cache => {
+      for (const url of urlsToCache) {
+        try { await cache.add(url); } catch (error) { /* réseau absent pendant l'installation */ }
+      }
+    })
   );
 });
 
 self.addEventListener('fetch', event => {
   event.respondWith(
-    caches.match(event.request)
-      .then(response => response || fetch(event.request))
+    if (new URL(event.request.url).origin !== self.location.origin || event.request.method !== 'GET') return;
+    event.respondWith(fetch(event.request).catch(() => caches.match(event.request)));
   );
 });

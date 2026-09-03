@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SmartWaste Citizen - Douala</title>
     <meta name="theme-color" content="#059669">
+    <link rel="manifest" href="/static/manifest.webmanifest">
 
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -106,6 +107,9 @@
                     <i data-lucide="bell" class="w-5 h-5"></i>
                     <span id="notifCount" class="absolute top-1 right-1 w-2 h-2 rounded-full bg-red-500 ring-2 ring-white"></span>
                 </button>
+                <select aria-label="Langue" onchange="setLanguage(this.value)" class="rounded-lg border border-gray-200 px-2 py-1 text-sm">
+                    <option value="fr">FR</option><option value="en">EN</option>
+                </select>
                 <div class="flex items-center gap-2">
                     <div class="bg-emerald-600 text-white rounded-full h-8 w-8 flex items-center justify-center font-semibold text-sm" id="userAvatar">U</div>
                     <div class="leading-tight">
@@ -144,6 +148,13 @@
                     </div>
                 </section>
 
+                <section id="signalements-hors-ligne" class="section-content hidden space-y-4">
+                    <h2 class="text-xl font-bold">Signalements en attente</h2>
+                    <p id="networkStatus" class="text-sm text-gray-500"></p>
+                    <button onclick="syncOfflineReports()" class="w-full bg-blue-500 text-white py-2 rounded-lg">Synchroniser maintenant</button>
+                    <div id="offlineReportsList" class="space-y-2"></div>
+                </section>
+
                 <!-- Signaler -->
                 <section id="signaler" class="section-content hidden space-y-6">
                     <h2 class="text-xl font-bold">📸 Signaler un dépôt sauvage</h2>
@@ -153,6 +164,8 @@
                         <div id="photoPreview" class="hidden mb-4"><img id="previewImg" class="w-full h-48 object-cover rounded-lg" /></div>
                         <label class="block text-sm font-medium mb-2">Description (optionnel)</label>
                         <textarea id="description" rows="3" class="w-full rounded-lg border border-gray-300 px-4 py-2" placeholder="Décrivez ce que vous voyez..."></textarea>
+                        <label class="block text-sm font-medium mb-2">Adresse (optionnel)</label>
+                        <input id="addressText" type="text" class="w-full rounded-lg border border-gray-300 px-4 py-2" placeholder="Adresse ou repère manuel">
                         <button onclick="envoyerSignalement()" class="mt-4 w-full bg-emerald-600 text-white py-2 rounded-lg hover:bg-emerald-700">Envoyer</button>
                         <p id="signalStatus" class="text-sm mt-2"></p>
                     </div>
@@ -291,6 +304,8 @@
 
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="/static/offline.js"></script>
+    <script src="/static/i18n.js"></script>
 
     <!-- Main Script -->
     <script>
@@ -369,6 +384,7 @@
                 if (data.access_token) {
                     token = data.access_token;
                     localStorage.setItem('token', token);
+                    if (data.language_preference) { currentLang = data.language_preference; translatePage(currentLang); }
                     document.getElementById('loginStatus').textContent = '✅ Connecté';
                     document.getElementById('loginCard').classList.add('hidden');
                     document.getElementById('registerCard').classList.add('hidden');
@@ -414,6 +430,7 @@
                 if (resp.ok) {
                     token = data.access_token;
                     localStorage.setItem('token', token);
+                    if (data.language_preference) { currentLang = data.language_preference; translatePage(currentLang); }
                     document.getElementById('registerStatus').textContent = '✅ Compte créé et connecté !';
                     document.getElementById('loginCard').classList.add('hidden');
                     document.getElementById('registerCard').classList.add('hidden');
@@ -547,20 +564,29 @@
 
         // --- ENVOYER SIGNALEMENT ---
         async function envoyerSignalement() {
-            if (!token || !(await checkTokenValidity())) {
-                document.getElementById('signalStatus').textContent = '❌ Session expirée, reconnectez-vous.';
-                return;
-            }
             const file = photoInput.files[0];
             if (!file) { document.getElementById('signalStatus').textContent = 'Veuillez choisir une photo'; return; }
             if (!navigator.geolocation) { alert('Géolocalisation non supportée'); return; }
             navigator.geolocation.getCurrentPosition(async (position) => {
                 const lat = position.coords.latitude;
                 const lon = position.coords.longitude;
+                const location = { lat, lon, accuracy: position.coords.accuracy };
+                if (!navigator.onLine) {
+                    await queueOfflineReport(file, location, description.value, document.getElementById('addressText')?.value);
+                    document.getElementById('signalStatus').textContent = 'Signalement conservé sur cet appareil.';
+                    return;
+                }
+                if (!token || !(await checkTokenValidity())) {
+                    document.getElementById('signalStatus').textContent = 'Session expirée, reconnectez-vous.';
+                    return;
+                }
                 const formData = new FormData();
                 formData.append('file', file);
+                formData.append('client_id', crypto.randomUUID());
                 formData.append('lat', lat);
                 formData.append('lon', lon);
+                formData.append('description', description.value);
+            formData.append('address_text', addressText.value);
                 showLoader();
                 try {
                     const resp = await fetch('/api/v1/signalements', {
@@ -893,9 +919,16 @@
         function setLanguage(lang) {
             currentLang = lang;
             localStorage.setItem('lang', lang);
+            translatePage(lang);
+            persistLanguage(lang, token).catch(() => {});
         }
 
         // --- INITIALISATION ---
+        if ('serviceWorker' in navigator) navigator.serviceWorker.register('/static/sw.js');
+        window.addEventListener('online', syncOfflineReports);
+        window.addEventListener('online', () => { document.getElementById('networkStatus').textContent = 'En ligne'; });
+        window.addEventListener('offline', () => { document.getElementById('networkStatus').textContent = 'Hors connexion'; });
+        renderOfflineReports();
         const savedToken = localStorage.getItem('token');
         if (savedToken) {
             token = savedToken;
@@ -908,6 +941,7 @@
                     const payload = parseJwt(token);
                     if (payload) {
                         userData = payload;
+                        if (payload.language_preference) setLanguage(payload.language_preference);
                         document.getElementById('userName').textContent = payload.name || payload.email || 'Citoyen';
                         document.getElementById('profileName').textContent = payload.name || 'Citoyen';
                         document.getElementById('profileEmail').textContent = payload.email || '';

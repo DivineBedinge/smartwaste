@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS reports (
     duplicate_group_id INTEGER,
     is_primary BOOLEAN NOT NULL DEFAULT TRUE,
     client_id UUID,
+    description TEXT,
     address_text TEXT,
     classification_source VARCHAR(32),
     classification_model_version VARCHAR(100),

@@ -3,6 +3,7 @@
   "short_name": "SmartWaste",
   "description": "Gestion participative des déchets à Douala",
   "start_url": "/citoyen",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#1e1e2f",
   "theme_color": "#4ade80",
