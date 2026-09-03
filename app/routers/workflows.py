@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from core.policy import COLLECTION_TRANSITIONS, can_transition, is_manager_role
 from app.services.collections import generate_database_occurrences
+from app.services.gps_retention import purge_old_positions
 from core.security import decode_token
 from database import get_db_connection
 
@@ -63,6 +64,10 @@ class SupportRequestCreate(BaseModel):
 class CollectionStatusUpdate(BaseModel):
     status: str
     missed_reason: Optional[str] = Field(default=None, max_length=64)
+
+
+class CollectorAssignment(BaseModel):
+    collector_id: int
 
 
 class OccurrenceGenerationRequest(BaseModel):
@@ -190,6 +195,14 @@ def generate_collections(
     created = generate_database_occurrences(conn, start, until)
     conn.close()
     return {"created": created, "start": start, "until": until}
+
+
+@router.post("/gestionnaire/gps/purger")
+def purge_gps_positions(user: dict = Depends(require_manager)):
+    conn = get_db_connection()
+    deleted = purge_old_positions(conn)
+    conn.close()
+    return {"deleted": deleted}
 
 
 @router.get("/demandes-support/mes-demandes")
@@ -320,6 +333,82 @@ def list_collector_collections(user: dict = Depends(require_collector)):
     cur.close()
     conn.close()
     return rows
+
+
+@router.post("/gestionnaire/collectes/{occurrence_id}/affecter")
+def assign_collection(
+    occurrence_id: int,
+    payload: CollectorAssignment,
+    user: dict = Depends(require_manager),
+):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT o.scheduled_for::date, s.service_area, o.status
+        FROM collection_occurrences o
+        JOIN domestic_subscriptions s ON s.id = o.subscription_id
+        WHERE o.id = %s
+        """,
+        (occurrence_id,),
+    )
+    occurrence = cur.fetchone()
+    if not occurrence:
+        cur.close()
+        conn.close()
+        raise HTTPException(404, "Occurrence non trouvée")
+    if occurrence[2] not in {"programmee", "reprogrammee"}:
+        cur.close()
+        conn.close()
+        raise HTTPException(409, "Occurrence déjà traitée")
+    cur.execute(
+        """
+        SELECT id, service_area, daily_capacity, available_weekdays
+        FROM users
+        WHERE id = %s AND role = 'ramasseur' AND active = TRUE
+        """,
+        (payload.collector_id,),
+    )
+    collector = cur.fetchone()
+    if not collector:
+        cur.close()
+        conn.close()
+        raise HTTPException(404, "Ramasseur actif non trouvé")
+    scheduled_date, service_area = occurrence[0], occurrence[1]
+    if collector[1] and service_area and collector[1] != service_area:
+        cur.close()
+        conn.close()
+        raise HTTPException(409, "Ramasseur hors zone")
+    if scheduled_date.weekday() not in (collector[3] or []):
+        cur.close()
+        conn.close()
+        raise HTTPException(409, "Ramasseur indisponible ce jour")
+    cur.execute(
+        """
+        SELECT COUNT(*) FROM collection_occurrences
+        WHERE collector_id = %s AND scheduled_for::date = %s
+          AND status NOT IN ('manquee', 'reprogrammee') AND id <> %s
+        """,
+        (collector[0], scheduled_date, occurrence_id),
+    )
+    if cur.fetchone()[0] >= collector[2]:
+        cur.close()
+        conn.close()
+        raise HTTPException(409, "Capacité journalière atteinte")
+    cur.execute(
+        """
+        UPDATE collection_occurrences
+        SET collector_id = %s, status = 'affectee', updated_at = NOW()
+        WHERE id = %s
+        RETURNING id, collector_id, status
+        """,
+        (collector[0], occurrence_id),
+    )
+    result = cur.fetchone()
+    conn.commit()
+    cur.close()
+    conn.close()
+    return {"id": result[0], "collector_id": result[1], "status": result[2]}
 
 
 @router.patch("/ramasseur/collectes/{occurrence_id}/status")
