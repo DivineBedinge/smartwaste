@@ -226,6 +226,11 @@ class HumanReviewUpdate(BaseModel):
     reason: str
     out_of_scope: bool = False
 
+
+class SignalementStatusUpdate(BaseModel):
+    status: str
+    reason: Optional[str] = None
+
 @app.put("/api/v1/signalements/{report_id}/commentaire")
 def ajouter_commentaire(report_id: int, payload: CommentaireUpdate, user: dict = Depends(require_admin)):
     conn = get_db_connection(); cur = conn.cursor()
@@ -724,17 +729,41 @@ def get_hors_sujet(user: dict = Depends(require_admin)):
     return rows
 
 @app.put("/api/v1/signalements/{report_id}/statut")
-def update_signalement_status(report_id: int, status: str, user: dict = Depends(require_admin)):
-    valid_statuses = ['valide', 'refuse', 'traite', 'en_cours', 'rejete_hors_sujet']
-    if status not in valid_statuses:
-        raise HTTPException(400, f"Statut invalide")
+def update_signalement_status(
+    report_id: int,
+    payload: SignalementStatusUpdate,
+    user: dict = Depends(require_admin),
+):
+    if payload.status not in REPORT_TRANSITIONS:
+        raise HTTPException(400, "Statut invalide")
+    if payload.status in {"rejete", "hors_sujet", "reouvert"} and not (payload.reason or "").strip():
+        raise HTTPException(422, "Un motif est obligatoire pour cette transition")
     conn = get_db_connection()
-    cur = conn.cursor()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute("SELECT status FROM reports WHERE id = %s", (report_id,))
+    report = cur.fetchone()
+    if not report:
+        cur.close()
+        conn.close()
+        raise HTTPException(404, "Signalement non trouvé")
+    if not can_transition(REPORT_TRANSITIONS, report["status"], payload.status):
+        cur.close()
+        conn.close()
+        raise HTTPException(409, "Transition de signalement invalide")
     cur.execute("""
         UPDATE reports SET status = %s, updated_at = NOW()
         WHERE id = %s RETURNING id, status
-    """, (status, report_id))
+    """, (payload.status, report_id))
     result = cur.fetchone()
+    cur.execute("""
+        INSERT INTO audit_logs
+            (actor_id, actor_role, action, resource_type, resource_id,
+             old_value, new_value, reason)
+        VALUES (%s, %s, 'status_change', 'report', %s, %s, %s, %s)
+    """, (
+        user["user_id"], user["role"], report_id,
+        {"status": report["status"]}, {"status": payload.status}, payload.reason,
+    ))
     conn.commit()
     cur.close()
     conn.close()

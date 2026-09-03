@@ -48,7 +48,7 @@ REPORT_TRANSITIONS = {
     "verification_requise": {"cloture", "reouvert", "en_cours"},
     "cloture": {"reouvert"},
     "reouvert": {"en_analyse", "a_verifier", "valide", "assigne"},
-    "rejete": set(),
+    "rejete": {"reouvert"},
     "hors_sujet": {"reouvert"},
 }
 
