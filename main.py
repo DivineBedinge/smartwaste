@@ -43,6 +43,7 @@ from app.router import is_faq_question
 from route_optimizer import get_graph, calculer_matrice_distances, resoudre_vrp
 from app.routers.workflows import router as workflows_router
 from app.services.routing import get_route
+from app.services.notifications import create_notification
 from fastapi import APIRouter, Depends, HTTPException, status
 
 
@@ -621,6 +622,15 @@ async def create_signalement(
         """, (report_id, report_id))
         group_id = report_id
 
+    conn.commit()
+    create_notification(
+        conn,
+        current_user["user_id"],
+        "report_received",
+        "Signalement reçu",
+        f"Votre signalement #{report_id} a été enregistré.",
+        f"/citoyen#signalement-{report_id}",
+    )
     conn.commit()
     cur.close()
     conn.close()

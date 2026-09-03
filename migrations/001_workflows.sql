@@ -96,7 +96,19 @@ CREATE TABLE IF NOT EXISTS support_requests (
     CHECK (status IN ('ouverte', 'en_examen', 'resolue', 'rejetee', 'fermee', 'contestee', 'remise_en_examen'))
 );
 
+CREATE TABLE IF NOT EXISTS notifications (
+    id BIGSERIAL PRIMARY KEY,
+    recipient_id INTEGER NOT NULL REFERENCES users(id),
+    notification_type VARCHAR(64) NOT NULL,
+    title VARCHAR(200) NOT NULL,
+    content TEXT NOT NULL,
+    link VARCHAR(2048),
+    is_read BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS idx_audit_logs_resource ON audit_logs(resource_type, resource_id);
 CREATE INDEX IF NOT EXISTS idx_occurrences_collector_date ON collection_occurrences(collector_id, scheduled_for);
 CREATE INDEX IF NOT EXISTS idx_occurrences_subscription_date ON collection_occurrences(subscription_id, scheduled_for);
 CREATE INDEX IF NOT EXISTS idx_support_requests_author ON support_requests(author_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON notifications(recipient_id, created_at DESC);

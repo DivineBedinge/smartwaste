@@ -212,6 +212,76 @@ def list_my_support_requests(user: dict = Depends(current_user)):
     return rows
 
 
+@router.get("/notifications")
+def list_notifications(user: dict = Depends(current_user)):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT id, notification_type, title, content, link, is_read, created_at
+        FROM notifications
+        WHERE recipient_id = %s
+        ORDER BY created_at DESC
+        LIMIT 100
+        """,
+        (user["user_id"],),
+    )
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rows
+
+
+@router.get("/notifications/unread-count")
+def unread_notification_count(user: dict = Depends(current_user)):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT COUNT(*) FROM notifications WHERE recipient_id = %s AND is_read = FALSE",
+        (user["user_id"],),
+    )
+    count = cur.fetchone()[0]
+    cur.close()
+    conn.close()
+    return {"count": count}
+
+
+@router.patch("/notifications/{notification_id}/read")
+def mark_notification_read(notification_id: int, user: dict = Depends(current_user)):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE notifications SET is_read = TRUE
+        WHERE id = %s AND recipient_id = %s
+        RETURNING id, is_read
+        """,
+        (notification_id, user["user_id"]),
+    )
+    result = cur.fetchone()
+    conn.commit()
+    cur.close()
+    conn.close()
+    if not result:
+        raise HTTPException(404, "Notification non trouvée")
+    return {"id": result[0], "is_read": result[1]}
+
+
+@router.patch("/notifications/read-all")
+def mark_all_notifications_read(user: dict = Depends(current_user)):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE notifications SET is_read = TRUE WHERE recipient_id = %s AND is_read = FALSE",
+        (user["user_id"],),
+    )
+    updated = cur.rowcount
+    conn.commit()
+    cur.close()
+    conn.close()
+    return {"updated": updated}
+
+
 @router.get("/gestionnaire/demandes-support")
 def list_support_requests(user: dict = Depends(require_manager)):
     conn = get_db_connection()

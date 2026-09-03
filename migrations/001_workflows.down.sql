@@ -1,5 +1,6 @@
 -- Reversal for 001_workflows.sql. Execute only after an explicit data backup.
 DROP TABLE IF EXISTS support_requests;
+DROP TABLE IF EXISTS notifications;
 DROP TABLE IF EXISTS collection_occurrences;
 DROP TABLE IF EXISTS domestic_subscriptions;
 DROP TABLE IF EXISTS service_slots;
