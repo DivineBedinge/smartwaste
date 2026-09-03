@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from database import get_db_connection
 from auth import router as auth_router
 from core.security import decode_token
+from core.classification import decide_severity
 from normalizer import normaliser_et_corriger, detecter_langue, extraire_mots_cles
 from chatbot_utils import (
     generer_embedding, recherche_rag, construire_contexte,
@@ -419,10 +420,15 @@ async def create_signalement(
     image_bytes = await file.read()
     photo_base64 = base64.b64encode(image_bytes).decode('utf-8')
 
-    severity, confidence = predict_severity(image_bytes)
+    try:
+        severity, confidence = predict_severity(image_bytes)
+        severity_decision = decide_severity(severity, confidence)
+    except Exception:
+        severity, confidence = None, None
+        severity_decision = decide_severity(None, None, model_error=True)
     type_dechet, _ = predict_type(image_bytes)
 
-    status = "soumis"
+    status = severity_decision.status
 
     conn = get_db_connection()
     cur = conn.cursor()
