@@ -54,3 +54,21 @@ Les migrations additives sont `migrations/001_workflows.sql`, `migrations/002_co
 | Carte moderne et suivi GPS sécurisé | partiellement implémentés; carte d’intervention complète restante |
 | Notifications persistantes | implémentées dans l’API et testées au niveau du service |
 | Tests d’intégration avec PostgreSQL/OSRM | non implémentés |
+# Environnement d'intégration et sécurité
+
+La base d'intégration est exclusivement désignée par `TEST_DATABASE_URL`; son nom doit
+contenir `_test`. Le service Compose `postgres_test` utilise `smartwaste_test`, le port
+local 5433 et un volume temporaire. `scripts/setup_test_database.py` applique d'abord
+le schéma historique `test.sql`, puis les migrations ascendantes dans l'ordre. Chaque
+migration est transactionnelle et enregistrée avec un checksum dans
+`schema_migrations`; un contenu modifié après application est refusé.
+
+Les interfaces conservent temporairement les jetons Bearer dans `localStorage` pour
+compatibilité. Les access tokens expirent désormais après 15 minutes par défaut et la
+clé est obligatoire en staging/production. Le passage à un cookie HttpOnly exige une
+table de sessions, rotation/révocation des refresh tokens et une protection CSRF ; il
+reste volontairement différé pour ne pas casser les clients existants.
+
+Les routeurs `agents.py`, `gestionnaires.py` et `ws.py` sont expérimentaux et ne sont
+pas enregistrés. Le WebSocket expérimental est fermé systématiquement afin qu'un rôle
+fourni par le client ne puisse jamais devenir une identité de confiance.

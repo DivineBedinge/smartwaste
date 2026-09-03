@@ -126,7 +126,7 @@
 
             const tour = tournees[0];
             currentTourneeId = tour.id;
-            document.getElementById('tourneeInfo').innerHTML = `Tournée #${tour.id} - ${tour.arrondissement || 'N/A'} - ${tour.status}`;
+            document.getElementById('tourneeInfo').textContent = `Tournée #${tour.id} - ${tour.arrondissement || 'N/A'} - ${tour.status}`;
 
             // Charger les points
             const respPoints = await fetch(`/api/v1/tournees/${tour.id}/points`, {
@@ -161,15 +161,13 @@
                     color: p.status === 'traite' ? '#4CAF50' : '#f39c12',
                     fillOpacity: 0.8
                 });
-                marker.bindPopup(`
-                    <strong>Point ${idx+1}</strong><br>
-                    Type : ${p.waste_type}<br>
-                    Sévérité : ${p.severity}<br>
-                    Statut : ${p.status}<br>
-                    ${idx === currentIndex ? '🔴 <b>Point actuel</b>' : ''}
-                    <br><button class="btn" onclick="prendreEnCharge(${p.id})">Prendre en charge</button><br>
-                    <button class="btn" onclick="envoyerPreuve(${p.id})">Envoyer photo preuve</button>
-                `);
+                const popup = document.createElement('div');
+                [`Point ${idx + 1}`, `Type : ${p.waste_type || 'N/A'}`, `Sévérité : ${p.severity || 'N/A'}`, `Statut : ${p.status || 'N/A'}`]
+                    .forEach(text => { const line = document.createElement('div'); line.textContent = text; popup.appendChild(line); });
+                if (idx === currentIndex) { const current = document.createElement('strong'); current.textContent = '🔴 Point actuel'; popup.appendChild(current); }
+                const take = document.createElement('button'); take.className = 'btn'; take.textContent = 'Prendre en charge'; take.addEventListener('click', () => prendreEnCharge(Number(p.id))); popup.appendChild(take);
+                const proof = document.createElement('button'); proof.className = 'btn'; proof.textContent = 'Envoyer photo preuve'; proof.addEventListener('click', () => envoyerPreuve(Number(p.id))); popup.appendChild(proof);
+                marker.bindPopup(popup);
                 marker.addTo(map);
             });
 
@@ -241,19 +239,20 @@
     const data = await resp.json();
     const div = document.getElementById('agentsPositions');
     if (!Array.isArray(data) || data.length === 0) {
-        div.innerHTML = 'Aucun agent connecté.';
+        div.textContent = 'Aucun agent connecté.';
         return;
     }
-    let html = '';
+    div.replaceChildren();
     data.forEach(a => {
         const date = new Date(a.timestamp).toLocaleTimeString();
-        html += `<div>Agent #${a.agent_id} – 📍 ${a.lat}, ${a.lon} – mis à jour à ${date}</div>`;
+        const row = document.createElement('div');
+        row.textContent = `Agent #${a.agent_id} – 📍 ${a.lat}, ${a.lon} – mis à jour à ${date}`;
+        div.appendChild(row);
         // Ajouter sur la carte
         L.circleMarker([a.lat, a.lon], { radius: 8, color: '#3498db' })
-            .bindPopup(`Agent #${a.agent_id}`)
+            .bindTooltip(`Agent #${Number(a.agent_id)}`)
             .addTo(map);
     });
-    div.innerHTML = html;
 }
     if (token) {
     envoyerPosition();

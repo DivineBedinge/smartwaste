@@ -1,3 +1,7 @@
+"""Experimental router: intentionally not registered; duplicates routes in main.py."""
+
+EXPERIMENTAL_DO_NOT_REGISTER = True
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from ws_manager import manager

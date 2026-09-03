@@ -11,5 +11,23 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
+  postgres_test:
+    image: postgis/postgis:14-3.4
+    container_name: smartwaste_postgres_test
+    environment:
+      POSTGRES_USER: smartwaste_test
+      POSTGRES_PASSWORD: test-only-password
+      POSTGRES_DB: smartwaste_test
+    ports:
+      - "5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smartwaste_test -d smartwaste_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    profiles: ["test"]
+
 volumes:
   postgres_data:

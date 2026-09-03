@@ -515,7 +515,12 @@
             const container = document.getElementById('toastContainer');
             const toast = document.createElement('div');
             toast.className = `toast ${type}`;
-            toast.innerHTML = `<i data-lucide="${type === 'error' ? 'alert-circle' : type === 'warning' ? 'alert-triangle' : 'info'}" class="w-5 h-5"></i><span>${message}</span>`;
+            const icon = document.createElement('i');
+            icon.dataset.lucide = type === 'error' ? 'alert-circle' : type === 'warning' ? 'alert-triangle' : 'info';
+            icon.className = 'w-5 h-5';
+            const label = document.createElement('span');
+            label.textContent = String(message);
+            toast.append(icon, label);
             container.appendChild(toast);
             lucide.createIcons();
             setTimeout(() => {

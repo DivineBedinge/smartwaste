@@ -332,7 +332,12 @@
             const container = document.getElementById('toastContainer');
             const toast = document.createElement('div');
             toast.className = `toast ${type}`;
-            toast.innerHTML = `<i data-lucide="${type === 'error' ? 'alert-circle' : type === 'warning' ? 'alert-triangle' : 'info'}" class="w-5 h-5"></i><span>${message}</span>`;
+            const icon = document.createElement('i');
+            icon.dataset.lucide = type === 'error' ? 'alert-circle' : type === 'warning' ? 'alert-triangle' : 'info';
+            icon.className = 'w-5 h-5';
+            const label = document.createElement('span');
+            label.textContent = String(message);
+            toast.append(icon, label);
             container.appendChild(toast);
             lucide.createIcons();
             setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300); }, 5000);
@@ -517,7 +522,13 @@
             const list = document.getElementById('notificationList');
             const item = document.createElement('div');
             item.className = 'bg-gray-50 p-3 rounded-lg text-sm';
-            item.innerHTML = `<span class="block">${message}</span><span class="text-xs text-gray-500">${new Date().toLocaleTimeString()}</span>`;
+            const label = document.createElement('span');
+            label.className = 'block';
+            label.textContent = String(message);
+            const time = document.createElement('span');
+            time.className = 'text-xs text-gray-500';
+            time.textContent = new Date().toLocaleTimeString();
+            item.append(label, time);
             list.prepend(item);
             document.getElementById('notifCount').style.display = 'block';
         }

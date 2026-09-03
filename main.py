@@ -42,6 +42,7 @@ from session_manager import session_manager
 from app.router import chatbot_cache_key, detect_simple_intent, is_faq_question, simple_chat_response
 from route_optimizer import get_graph, calculer_matrice_distances, resoudre_vrp
 from app.routers.workflows import router as workflows_router
+from app.services.uploads import read_validated_image
 from app.services.routing import get_route
 from app.services.notifications import create_notification
 from app.services.gps_tracking import PositionRateLimiter
@@ -364,20 +365,6 @@ def preprocess(image_bytes):
     arr = np.transpose(arr, (2, 0, 1))
     arr = np.expand_dims(arr, axis=0).astype(np.float32)
     return arr
-
-
-async def read_validated_image(file: UploadFile) -> bytes:
-    if not file.content_type or not file.content_type.startswith("image/"):
-        raise HTTPException(400, "Le fichier doit être une image")
-    image_bytes = await file.read(MAX_UPLOAD_BYTES + 1)
-    if len(image_bytes) > MAX_UPLOAD_BYTES:
-        raise HTTPException(413, "Image trop volumineuse")
-    try:
-        with Image.open(io.BytesIO(image_bytes)) as image:
-            image.verify()
-    except Exception as exc:
-        raise HTTPException(400, "Image invalide") from exc
-    return image_bytes
 
 
 def validate_coordinates(lat: float, lon: float) -> None:

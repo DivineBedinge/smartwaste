@@ -1,11 +1,17 @@
+"""Experimental router: intentionally not registered; duplicates routes in main.py."""
+
+EXPERIMENTAL_DO_NOT_REGISTER = True
+
 from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Form
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import Optional, List
 import psycopg2.extras
+import base64
 from database import get_db_connection
 from core.security import decode_token
 from core.policy import is_agent_role
 from app.services.live_tracking import update_agent_position
+from app.services.uploads import read_validated_image
 
 router = APIRouter(prefix="/api/v1/agent", tags=["agent"])
 security = HTTPBearer()
@@ -95,7 +101,7 @@ async def envoyer_preuve(
     if not payload or not is_agent_role(payload.get("role", ""), include_managers=True):
         raise HTTPException(403, "Accès refusé")
 
-    image_bytes = await file.read()
+    image_bytes = await read_validated_image(file)
     photo_base64 = base64.b64encode(image_bytes).decode('utf-8')
     conn = get_db_connection()
     cur = conn.cursor()
