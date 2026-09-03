@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SmartWaste CM+ - Agent Map (Itinéraire)</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { font-family: Arial; margin: 20px; }
+        #map { height: 600px; }
+        .controls { margin: 10px 0; }
+        .btn { padding: 10px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        #info { background: #fafafa; padding: 10px; margin-top: 10px; }
+        #tokenInput { width: 300px; padding: 8px; margin-right: 10px; }
+    </style>
+</head>
+<body>
+    <h2>🗑️ Carte Agent - Itinéraire vers les tas</h2>
+    
+    <div class="controls">
+        <input type="text" id="tokenInput" placeholder="Collez votre token JWT ici">
+        <button class="btn" onclick="saveToken()">Enregistrer token</button>
+        <button class="btn" onclick="startTracking()">▶️ Démarrer le suivi</button>
+        <button class="btn" onclick="stopTracking()">⏹️ Arrêter</button>
+    </div>
+
+    <div id="map"></div>
+    <div id="info">En attente...</div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        let map = L.map('map').setView([4.05, 9.70], 12);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OSM' }).addTo(map);
+
+        let token = localStorage.getItem('agent_token') || '';
+        document.getElementById('tokenInput').value = token;
+
+        let currentRoute = null;
+        let currentTourneeId = null;
+        let watchId = null;
+
+        function saveToken() {
+            token = document.getElementById('tokenInput').value.trim();
+            localStorage.setItem('agent_token', token);
+            alert('Token enregistré');
+        }
+
+        async function chargerTournee() {
+            if (!token) return alert('Enregistrez le token');
+
+            // 1. Récupérer la première tournée en cours de l'agent
+            const resp = await fetch('/api/v1/tournees/en-cours', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const tournees = await resp.json();
+            
+            if (!Array.isArray(tournees) || tournees.length === 0) {
+                document.getElementById('info').innerText = 'Aucune tournée assignée';
+                return;
+            }
+            currentTourneeId = tournees[0].id;
+
+            // 2. Charger les points de la tournée
+            const respPoints = await fetch(`/api/v1/tournees/${currentTourneeId}/points`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const points = await respPoints.json();
+
+            // 3. Charger l'itinéraire routier
+            const respRoute = await fetch(`/api/v1/tournees/${currentTourneeId}/itineraire`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const routeData = await respRoute.json();
+
+            // Nettoyer la carte
+            map.eachLayer(layer => {
+                if (layer instanceof L.Marker || layer instanceof L.Polyline) {
+                    map.removeLayer(layer);
+                }
+            });
+
+            // Dessiner l'itinéraire
+            if (routeData.geometry && routeData.geometry.type === 'LineString') {
+                L.polyline(routeData.geometry.coordinates.map(c => [c[1], c[0]]), {
+                    color: '#4CAF50', weight: 5, opacity: 0.8
+                }).addTo(map);
+            } else if (routeData.geometry && routeData.geometry.features) {
+                routeData.geometry.features.forEach(f => {
+                    if (f.geometry.type === 'LineString') {
+                        L.polyline(f.geometry.coordinates.map(c => [c[1], c[0]]), {
+                            color: '#4CAF50', weight: 5, opacity: 0.8
+                        }).addTo(map);
+                    }
+                });
+            }
+
+            // Dessiner les points (tas)
+            points.forEach((p, idx) => {
+                const color = p.status === 'traite' ? '#4CAF50' : '#f39c12';
+                const marker = L.circleMarker([p.lat, p.lon], {
+                    radius: 12, color: color, fillOpacity: 0.8
+                });
+                marker.bindPopup(`<strong>Point ${idx+1}</strong><br>Type : ${p.waste_type}<br>Statut : ${p.status}`);
+                marker.addTo(map);
+            });
+
+            // Ajuster la vue
+            if (points.length > 0) {
+                const bounds = L.latLngBounds(points.map(p => [p.lat, p.lon]));
+                map.fitBounds(bounds);
+            }
+
+            document.getElementById('info').innerText = `Tournée #${currentTourneeId} - ${points.length} points`;
+        }
+
+        // Suivi GPS
+        function startTracking() {
+            if (!token) return alert('Enregistrez le token');
+            chargerTournee(); // Charger une première fois
+
+            if (navigator.geolocation) {
+                watchId = navigator.geolocation.watchPosition(async (pos) => {
+                    const lat = pos.coords.latitude;
+                    const lon = pos.coords.longitude;
+
+                    // Envoyer la position au backend
+                    await fetch('/api/v1/agent/position', {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ lat, lon })
+                    }).catch(console.error);
+
+                    // Ajouter un marqueur pour l'agent
+                    L.marker([lat, lon], { icon: L.divIcon({ className: 'my-marker', html: '🟢' }) })
+                     .addTo(map);
+                }, err => console.error(err), { enableHighAccuracy: true });
+            }
+
+            // Rafraîchir l'itinéraire toutes les 30 secondes
+            setInterval(chargerTournee, 30000);
+        }
+
+        function stopTracking() {
+            if (watchId) navigator.geolocation.clearWatch(watchId);
+        }
+
+        // Charger la tournée au démarrage si token existe
+        if (token) chargerTournee();
+    </script>
+</body>
+</html>

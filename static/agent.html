@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SmartWaste CM+ - Agent</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { font-family: Arial; margin: 20px; }
+        .card { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        h1, h2 { color: #2c3e50; }
+        #map { height: 600px; border-radius: 8px; }
+        .btn { padding: 8px 16px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; margin-top: 5px; }
+        .btn:disabled { background: #ccc; cursor: not-allowed; }
+        .btn-danger { background: #e74c3c; }
+        input { padding: 8px; margin: 4px 0; width: 100%; }
+        .log { background: #fafafa; padding: 10px; border-radius: 4px; max-height: 200px; overflow-y: auto; font-size: 0.9rem; }
+    </style>
+</head>
+<body>
+    <h1>🗑️ SmartWaste CM+ - Agent</h1>
+
+    <div class="card">
+        <h2>Connexion</h2>
+        <input type="email" id="email" placeholder="Email"><br>
+        <input type="password" id="password" placeholder="Mot de passe"><br>
+        <button class="btn" onclick="login()">Se connecter</button>
+    </div>
+
+    <div class="card">
+        <h2>Ma tournée</h2>
+        <button class="btn" onclick="chargerTournee()">Charger la tournée</button>
+        <div id="tourneeInfo"></div>
+    </div>
+
+    <div class="card">
+        <div id="map"></div>
+    </div>
+    <div class="card">
+        <h2>Agents en temps réel</h2>
+        <button class="btn" onclick="chargerAgentsPositions()">Actualiser</button>
+        <div id="agentsPositions"></div>
+    </div>
+    <div class="card">
+        <h2>Journal d'activité</h2>
+        <div id="log" class="log"></div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        let map = L.map('map').setView([4.05, 9.70], 12);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(map);
+        let token = '';
+        let currentTourneeId = null;
+        let points = [];
+        let currentIndex = 0;
+
+        function addLog(msg) {
+            const log = document.getElementById('log');
+            const p = document.createElement('p');
+            p.textContent = new Date().toLocaleTimeString() + ' - ' + msg;
+            log.appendChild(p);
+        }
+
+        // Envoyer la position GPS toutes les 10 secondes
+        function envoyerPosition() {
+            if (!navigator.geolocation || !token) return;
+            navigator.geolocation.getCurrentPosition(async (pos) => {
+                const lat = pos.coords.latitude;
+                const lon = pos.coords.longitude;
+                await fetch('/api/v1/agent/position', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ lat, lon })
+                });
+            }, () => { /* ignorer les erreurs de géolocalisation */ });
+        }
+
+        // Modifier la fonction login pour lancer le suivi
+        async function login() {
+            // ... votre code existant ...
+            if (data.access_token) {
+                token = data.access_token;
+                addLog('Connexion réussie');
+                chargerTournee();
+                // Lancer l’envoi de position
+                setInterval(envoyerPosition, 10000);
+                envoyerPosition(); // envoi immédiat
+            }
+            // ...
+        }
+
+        async function login() {
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            const resp = await fetch('/api/v1/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password })
+            });
+            const data = await resp.json();
+            if (data.access_token) {
+                token = data.access_token;
+                addLog('Connexion réussie');
+                chargerTournee();
+            } else {
+                alert('Erreur de connexion');
+                addLog('Échec connexion');
+            }
+        }
+
+        async function chargerTournee() {
+            if (!token) return alert('Connectez-vous');
+
+            const resp = await fetch('/api/v1/tournees/en-cours', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const tournees = await resp.json();
+            if (!Array.isArray(tournees) || tournees.length === 0) {
+                document.getElementById('tourneeInfo').innerText = 'Aucune tournée assignée';
+                return;
+            }
+
+            const tour = tournees[0];
+            currentTourneeId = tour.id;
+            document.getElementById('tourneeInfo').innerHTML = `Tournée #${tour.id} - ${tour.arrondissement || 'N/A'} - ${tour.status}`;
+
+            // Charger les points
+            const respPoints = await fetch(`/api/v1/tournees/${tour.id}/points`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            points = await respPoints.json();
+
+            // Charger l'itinéraire
+            const respRoute = await fetch(`/api/v1/tournees/${tour.id}/itineraire`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const routeData = await respRoute.json();
+
+            // Nettoyer la carte
+            map.eachLayer(layer => {
+                if (layer instanceof L.Marker || layer instanceof L.CircleMarker || layer instanceof L.Polyline) {
+                    map.removeLayer(layer);
+                }
+            });
+
+            // Dessiner l'itinéraire
+            if (routeData.geometry) {
+                L.geoJSON(routeData.geometry, {
+                    style: { color: '#4CAF50', weight: 5, opacity: 0.7 }
+                }).addTo(map);
+            }
+
+            // Ajouter les points
+            points.forEach((p, idx) => {
+                const marker = L.circleMarker([p.lat, p.lon], {
+                    radius: 12,
+                    color: p.status === 'traite' ? '#4CAF50' : '#f39c12',
+                    fillOpacity: 0.8
+                });
+                marker.bindPopup(`
+                    <strong>Point ${idx+1}</strong><br>
+                    Type : ${p.waste_type}<br>
+                    Sévérité : ${p.severity}<br>
+                    Statut : ${p.status}<br>
+                    ${idx === currentIndex ? '🔴 <b>Point actuel</b>' : ''}
+                    <br><button class="btn" onclick="prendreEnCharge(${p.id})">Prendre en charge</button><br>
+                    <button class="btn" onclick="envoyerPreuve(${p.id})">Envoyer photo preuve</button>
+                `);
+                marker.addTo(map);
+            });
+
+            // Ajuster la vue
+            if (points.length > 0) {
+                const bounds = L.latLngBounds(points.map(p => [p.lat, p.lon]));
+                map.fitBounds(bounds);
+            }
+
+            addLog(`Tournée #${tour.id} chargée avec ${points.length} points`);
+        }
+
+        async function prendreEnCharge(id) {
+            if (!token) return;
+            await fetch(`/api/v1/signalements/${id}/prendre-en-charge`, {
+                method: 'PUT',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            addLog(`Signalement #${id} pris en charge`);
+            chargerTournee();
+        }
+
+        async function envoyerPreuve(id) {
+            if (!token) return;
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = 'image/*';
+            input.onchange = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const pos = await new Promise((resolve, reject) => {
+                    navigator.geolocation.getCurrentPosition(resolve, reject);
+                });
+                const formData = new FormData();
+                formData.append('file', file);
+                formData.append('lat', pos.coords.latitude);
+                formData.append('lon', pos.coords.longitude);
+
+                const resp = await fetch(`/api/v1/signalements/${id}/preuve-traitement`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` },
+                    body: formData
+                });
+                const result = await resp.json();
+                addLog(`Preuve envoyée pour #${id} -> ${result.status}`);
+                currentIndex++;
+                chargerTournee();
+            };
+            input.click();
+        }
+
+        async function terminerTournee() {
+            if (!currentTourneeId) return;
+            const resp = await fetch(`/api/v1/tournees/${currentTourneeId}/terminer`, {
+                method: 'PUT',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (resp.ok) {
+                addLog('Tournée terminée !');
+                document.getElementById('tourneeInfo').innerText = 'Tournée terminée';
+            }
+        }
+
+        async function chargerAgentsPositions() {
+    if (!token) return;
+    const resp = await fetch('/api/v1/gestionnaire/agents-positions', {
+        headers: { 'Authorization': `Bearer ${token}` }
+    });
+    const data = await resp.json();
+    const div = document.getElementById('agentsPositions');
+    if (!Array.isArray(data) || data.length === 0) {
+        div.innerHTML = 'Aucun agent connecté.';
+        return;
+    }
+    let html = '';
+    data.forEach(a => {
+        const date = new Date(a.timestamp).toLocaleTimeString();
+        html += `<div>Agent #${a.agent_id} – 📍 ${a.lat}, ${a.lon} – mis à jour à ${date}</div>`;
+        // Ajouter sur la carte
+        L.circleMarker([a.lat, a.lon], { radius: 8, color: '#3498db' })
+            .bindPopup(`Agent #${a.agent_id}`)
+            .addTo(map);
+    });
+    div.innerHTML = html;
+}
+    if (token) {
+    envoyerPosition();
+    setInterval(envoyerPosition, 10000);
+}
+        // Actualiser toutes les 30 secondes
+        setInterval(chargerAgentsPositions, 10000);
+        setInterval(() => {
+            if (token && currentTourneeId) chargerTournee();
+        }, 30000);
+    </script>
+</body>
+</html>

@@ -1,0 +1,1298 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SmartWaste CM+ - Gestionnaire</title>
+
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        // Configuration Tailwind pour le mode sombre
+        tailwind.config = {
+            darkMode: 'class'
+        }
+    </script>
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css" />
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        .sidebar { background: #1e293b; }
+        .sidebar a.active { background: #059669; }
+        .card-hover:hover { transform: translateY(-3px); box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .sw-fade-in { animation: fadeIn 0.4s ease; }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .chart-container { position: relative; height: 250px; width: 100%; }
+        .loader-overlay { display: none; position: fixed; inset: 0; background: rgba(255,255,255,0.7); z-index: 9999; justify-content: center; align-items: center; }
+        .loader-overlay.active { display: flex; }
+        .spinner { border: 6px solid #e5e7eb; border-top: 6px solid #059669; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .pagination { display: flex; gap: 10px; margin-top: 10px; justify-content: center; align-items: center; }
+        .pagination button { padding: 5px 12px; }
+        .info-note { background: #eff6ff; padding: 12px; border-radius: 8px; border-left: 4px solid #3b82f6; font-size: 0.85rem; margin-top: 10px; }
+        .toast-container { position: fixed; top: 20px; right: 20px; z-index: 10000; display: flex; flex-direction: column; gap: 10px; }
+        .toast { background: white; border-left: 4px solid #059669; padding: 12px 16px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: flex; align-items: center; gap: 10px; animation: slideIn 0.3s ease; }
+        .toast.error { border-left-color: #ef4444; }
+        .toast.warning { border-left-color: #f59e0b; }
+        @keyframes slideIn { from { opacity: 0; transform: translateX(50px); } to { opacity: 1; transform: translateX(0); } }
+        
+        /* Dark mode overrides */
+        .dark .card { background-color: #1f2937; border-color: #374151; }
+        .dark .text-gray-500 { color: #9ca3af; }
+        .dark .text-gray-800 { color: #f3f4f6; }
+        .dark .bg-white { background-color: #1f2937; }
+        .dark .border-gray-100 { border-color: #374151; }
+        .dark .border-gray-200 { border-color: #374151; }
+        .dark .bg-gray-50 { background-color: #111827; }
+        .dark .bg-gray-100 { background-color: #374151; }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800 font-sans">
+
+    <!-- Spinner -->
+    <div id="loaderOverlay" class="loader-overlay">
+        <div class="spinner"></div>
+    </div>
+
+    <!-- Login -->
+    <div class="card bg-white rounded-xl shadow-sm p-6 max-w-md mx-auto mt-20" id="loginCard">
+        <h2 class="text-2xl font-bold mb-4" data-i18n="login_title">🔐 Connexion</h2>
+        <div class="space-y-4">
+            <div>
+                <label class="block text-sm font-medium" data-i18n="email">Email</label>
+                <input type="email" id="email" placeholder="admin@smartwaste.cm" class="mt-1 w-full rounded-lg border border-gray-300 px-4 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+            </div>
+            <div>
+                <label class="block text-sm font-medium" data-i18n="password">Mot de passe</label>
+                <input type="password" id="password" placeholder="********" class="mt-1 w-full rounded-lg border border-gray-300 px-4 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+            </div>
+            <button class="w-full bg-emerald-600 text-white py-2 rounded-lg hover:bg-emerald-700" onclick="login()" data-i18n="login">Se connecter</button>
+            <span id="loginStatus" class="text-sm"></span>
+        </div>
+    </div>
+
+    <!-- Interface principale -->
+    <div id="postLogin" style="display:none;" class="flex min-h-screen">
+        <!-- Sidebar -->
+        <aside class="sidebar fixed inset-y-0 left-0 w-64 text-white flex flex-col z-40">
+            <div class="flex items-center gap-3 px-5 py-5 border-b border-gray-700">
+                <div class="bg-emerald-600 rounded-xl p-2"><i data-lucide="recycle" class="w-6 h-6"></i></div>
+                <div>
+                    <p class="font-bold text-sm">SmartWaste</p>
+                    <p class="text-xs text-emerald-400">CM+ · Douala</p>
+                </div>
+            </div>
+            <nav class="flex-1 space-y-1 px-3 py-4">
+                <a href="#" data-section="dashboard" class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium hover:bg-slate-700 active">
+                    <i data-lucide="layout-dashboard" class="w-5 h-5"></i> <span data-i18n="dashboard">Tableau de bord</span>
+                </a>
+                <a href="#" data-section="signalements" class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium hover:bg-slate-700">
+                    <i data-lucide="map-pin" class="w-5 h-5"></i> <span data-i18n="signalements">Signalements</span>
+                </a>
+                <a href="#" data-section="tournees" class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium hover:bg-slate-700">
+                    <i data-lucide="truck" class="w-5 h-5"></i> <span data-i18n="tournees">Tournées</span>
+                </a>
+                <a href="#" data-section="agents" class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium hover:bg-slate-700">
+                    <i data-lucide="users" class="w-5 h-5"></i> <span data-i18n="agents">Agents</span>
+                </a>
+                <a href="#" data-section="prix" class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium hover:bg-slate-700">
+                    <i data-lucide="coins" class="w-5 h-5"></i> <span data-i18n="prix">Prix de rachat</span>
+                </a>
+                <a href="#" data-section="points" class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium hover:bg-slate-700">
+                    <i data-lucide="map" class="w-5 h-5"></i> <span data-i18n="points">Points de collecte</span>
+                </a>
+                <a href="#" data-section="groupes" class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium hover:bg-slate-700">
+                    <i data-lucide="layers" class="w-5 h-5"></i> <span data-i18n="groupes">Groupes</span>
+                </a>
+            </nav>
+            <div class="border-t border-gray-700 p-3">
+                <button onclick="logout()" class="flex w-full items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium hover:bg-slate-700">
+                    <i data-lucide="log-out" class="w-5 h-5"></i> <span data-i18n="logout">Déconnexion</span>
+                </button>
+            </div>
+        </aside>
+
+        <!-- Main content -->
+        <div class="flex-1 ml-64 flex flex-col">
+            <!-- Topbar -->
+            <header class="sticky top-0 z-30 bg-white/90 backdrop-blur border-b border-gray-200 px-6 py-3 flex items-center gap-4">
+                <nav aria-label="Fil d'ariane" class="hidden sm:flex text-sm text-gray-500">
+                    <span data-i18n="home">Accueil</span>
+                    <span class="mx-2">/</span>
+                    <span id="breadcrumb" class="text-gray-800 font-medium">Tableau de bord</span>
+                </nav>
+                <div class="relative ml-auto w-64">
+                    <i data-lucide="search" class="absolute left-3 top-2.5 w-4 h-4 text-gray-400"></i>
+                    <input id="globalSearch" type="search" placeholder="Rechercher…" class="w-full rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" oninput="handleSearch(this.value)">
+                </div>
+                <button onclick="openSettings()" class="relative p-2 rounded-lg border border-gray-200 bg-white text-gray-500 hover:text-gray-700" aria-label="Paramètres">
+                    <i data-lucide="settings" class="w-5 h-5"></i>
+                </button>
+                <button onclick="toggleNotifications()" class="relative p-2 rounded-lg border border-gray-200 bg-white text-gray-500 hover:text-gray-700" aria-label="Notifications">
+                    <i data-lucide="bell" class="w-5 h-5"></i>
+                    <span id="notifCount" class="absolute top-1 right-1 w-2 h-2 rounded-full bg-red-500 ring-2 ring-white"></span>
+                </button>
+                <div class="flex items-center gap-2">
+                    <div class="bg-emerald-600 text-white rounded-full h-9 w-9 flex items-center justify-center font-semibold text-sm" id="userAvatar">RN</div>
+                    <div class="hidden md:block leading-tight">
+                        <p class="text-sm font-medium" id="userName">Roger Ndoumbé</p>
+                        <p class="text-xs text-gray-500">Gestionnaire · CUD</p>
+                    </div>
+                </div>
+            </header>
+
+            <main class="p-6 space-y-6">
+                <!-- DASHBOARD -->
+                <section id="dashboard" class="section-content space-y-6">
+                    <div class="sw-fade-in">
+                        <h1 class="text-2xl font-bold" data-i18n="welcome">Bonjour Roger, voici l'état des collectes</h1>
+                        <p class="text-sm text-gray-500 mt-1">Communauté Urbaine de Douala · Mise à jour il y a quelques instants</p>
+                    </div>
+
+                    <!-- KPI Cards -->
+                    <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+                        <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100 card-hover sw-fade-in">
+                            <div class="flex items-start justify-between">
+                                <span class="bg-emerald-100 text-emerald-600 rounded-xl p-2"><i data-lucide="trash-2" class="w-5 h-5"></i></span>
+                                <span class="text-xs text-green-600 font-medium flex items-center gap-1"><i data-lucide="trending-up" class="w-3 h-3"></i> +12%</span>
+                            </div>
+                            <p id="statTotal" class="mt-4 text-3xl font-bold">0</p>
+                            <p class="text-sm text-gray-500" data-i18n="total_signalements">Total signalements</p>
+                        </div>
+                        <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100 card-hover sw-fade-in">
+                            <div class="flex items-start justify-between">
+                                <span class="bg-red-100 text-red-600 rounded-xl p-2"><i data-lucide="alert-triangle" class="w-5 h-5"></i></span>
+                                <span class="text-xs text-green-600 font-medium">+3</span>
+                            </div>
+                            <p id="statCritiques" class="mt-4 text-3xl font-bold">0</p>
+                            <p class="text-sm text-gray-500" data-i18n="critiques">Critiques</p>
+                        </div>
+                        <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100 card-hover sw-fade-in">
+                            <div class="flex items-start justify-between">
+                                <span class="bg-green-100 text-green-600 rounded-xl p-2"><i data-lucide="check-circle-2" class="w-5 h-5"></i></span>
+                                <span class="text-xs text-green-600 font-medium">+8%</span>
+                            </div>
+                            <p id="statTraites" class="mt-4 text-3xl font-bold">0</p>
+                            <p class="text-sm text-gray-500" data-i18n="traites">Traités</p>
+                        </div>
+                        <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100 card-hover sw-fade-in">
+                            <div class="flex items-start justify-between">
+                                <span class="bg-blue-100 text-blue-600 rounded-xl p-2"><i data-lucide="users" class="w-5 h-5"></i></span>
+                                <span class="text-xs text-red-500 font-medium"><i data-lucide="trending-down" class="w-3 h-3"></i> -1</span>
+                            </div>
+                            <p id="statAgents" class="mt-4 text-3xl font-bold">0</p>
+                            <p class="text-sm text-gray-500" data-i18n="agents_actifs">Agents actifs</p>
+                        </div>
+                    </div>
+
+                    <!-- Charts -->
+                    <div class="grid grid-cols-1 lg:grid-cols-5 gap-6">
+                        <div class="lg:col-span-3 bg-white rounded-xl p-5 shadow-sm border border-gray-100 sw-fade-in">
+                            <h3 class="font-semibold mb-2">Signalements par arrondissement</h3>
+                            <div class="chart-container">
+                                <canvas id="chartArrondissement" height="200"></canvas>
+                            </div>
+                            <div class="info-note" data-i18n="note_cud">💡 <strong>Note pour la CUD :</strong> Cette répartition aide la CUD à prioriser l'affectation des équipes et des bacs vers les arrondissements les plus sollicités.</div>
+                        </div>
+                        <div class="lg:col-span-2 bg-white rounded-xl p-5 shadow-sm border border-gray-100 sw-fade-in">
+                            <h3 class="font-semibold mb-2">Distribution par sévérité</h3>
+                            <div class="chart-container">
+                                <canvas id="chartSeverite" height="200"></canvas>
+                            </div>
+                            <ul class="mt-3 space-y-2">
+                                <li class="flex items-center text-sm"><span class="w-3 h-3 rounded-full bg-red-500 mr-2"></span><span data-i18n="critique">Critique</span></li>
+                                <li class="flex items-center text-sm"><span class="w-3 h-3 rounded-full bg-orange-500 mr-2"></span><span data-i18n="moderee">Modérée</span></li>
+                                <li class="flex items-center text-sm"><span class="w-3 h-3 rounded-full bg-green-500 mr-2"></span><span data-i18n="faible">Faible</span></li>
+                                <li class="flex items-center text-sm"><span class="w-3 h-3 rounded-full bg-gray-400 mr-2"></span><span data-i18n="hors_sujet">Hors-sujet</span></li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <!-- Carte -->
+                    <div class="bg-white rounded-xl shadow-sm border border-gray-100 sw-fade-in relative">
+                        <div class="flex items-center justify-between p-5 border-b">
+                            <div>
+                                <h3 class="font-semibold">Carte opérationnelle · Douala</h3>
+                                <p class="text-xs text-gray-500">Signalements, agents et tournées en temps réel</p>
+                            </div>
+                            <button onclick="chargerToutSurCarte()" class="bg-emerald-600 text-white px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-2 hover:bg-emerald-700">
+                                <i data-lucide="refresh-cw" class="w-4 h-4"></i> Recharger
+                            </button>
+                        </div>
+                        <div id="map" class="h-[420px] w-full rounded-b-xl"></div>
+                        <div id="routeInfo" class="absolute bottom-4 left-4 bg-white/95 rounded-xl shadow-lg p-3 text-sm"></div>
+                    </div>
+
+                    <!-- Signalements récents -->
+                    <div class="bg-white rounded-xl shadow-sm border border-gray-100 sw-fade-in">
+                        <div class="p-5 border-b flex justify-between items-center">
+                            <h3 class="font-semibold">Signalements récents</h3>
+                            <a href="#" data-section="signalements" class="text-sm text-emerald-600 hover:underline">Voir tout</a>
+                        </div>
+                        <div id="recentSignalements" class="divide-y divide-gray-100"></div>
+                    </div>
+                </section>
+
+                <!-- SIGNALEMENTS -->
+                <section id="signalements" class="section-content hidden space-y-6">
+                    <div class="sw-fade-in">
+                        <h1 class="text-2xl font-bold">Signalements</h1>
+                        <p class="text-sm text-gray-500 mt-1">Tous les signalements citoyens</p>
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                        <button class="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm" onclick="chargerSignalements('soumis')">Soumis</button>
+                        <button class="bg-orange-500 text-white px-4 py-2 rounded-lg text-sm" onclick="chargerSignalements('en_attente_validation')">Hors-sujet</button>
+                        <button class="bg-blue-500 text-white px-4 py-2 rounded-lg text-sm" onclick="chargerSignalements('valide')">Validés</button>
+                    </div>
+                    <div class="bg-white rounded-xl shadow-sm border border-gray-100">
+                        <div class="p-5 border-b">
+                            <p id="signalementsCount" class="text-sm text-gray-500">0 résultat</p>
+                        </div>
+                        <div id="signalementsFullList" class="divide-y divide-gray-100"></div>
+                        <div id="signalementPagination" class="pagination"></div>
+                    </div>
+                </section>
+
+                <!-- TOURNÉES -->
+                <section id="tournees" class="section-content hidden space-y-6">
+                    <div class="sw-fade-in">
+                        <h1 class="text-2xl font-bold">Tournées</h1>
+                        <p class="text-sm text-gray-500 mt-1">Planification et suivi</p>
+                    </div>
+                    <div class="flex gap-2">
+                        <button class="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm" onclick="optimiser()">Optimiser</button>
+                        <button class="bg-blue-500 text-white px-4 py-2 rounded-lg text-sm" onclick="optimiserEtCreerTournee()">Optimiser + Créer tournée</button>
+                    </div>
+                    <div id="tourneesList" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4"></div>
+                </section>
+
+                <!-- AGENTS -->
+                <section id="agents" class="section-content hidden space-y-6">
+                    <div class="sw-fade-in">
+                        <h1 class="text-2xl font-bold">Agents de terrain</h1>
+                        <p class="text-sm text-gray-500 mt-1">Suivi en temps réel</p>
+                    </div>
+                    <div class="flex gap-2">
+                        <button class="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm" onclick="chargerAgents()">Liste des agents</button>
+                    </div>
+                    <div id="agentsList" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4"></div>
+                    <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+                        <h3 class="font-semibold mb-2">Ajouter un agent</h3>
+                        <div class="grid grid-cols-2 gap-4">
+                            <input type="email" id="newAgentEmail" placeholder="Email" class="rounded-lg border border-gray-300 px-4 py-2">
+                            <input type="password" id="newAgentPassword" placeholder="Mot de passe" class="rounded-lg border border-gray-300 px-4 py-2">
+                            <input type="text" id="newAgentArrondissement" placeholder="Arrondissement" class="rounded-lg border border-gray-300 px-4 py-2">
+                            <select id="newAgentType" class="rounded-lg border border-gray-300 px-4 py-2">
+                                <option value="officiel">Officiel (CUD)</option>
+                                <option value="particulier">Récupérateur particulier</option>
+                            </select>
+                        </div>
+                        <button class="mt-4 bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm" onclick="creerAgent()">Ajouter</button>
+                    </div>
+                </section>
+
+                <!-- PRIX DE RACHAT -->
+                <section id="prix" class="section-content hidden space-y-6">
+                    <div class="sw-fade-in">
+                        <h1 class="text-2xl font-bold">Prix de rachat des matières</h1>
+                        <p class="text-sm text-gray-500 mt-1">Tarifs en FCFA/kg selon le type de déchet</p>
+                    </div>
+                    <button class="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm" onclick="chargerPrix()">Charger les prix</button>
+                    <div id="prixList" class="bg-white rounded-xl shadow-sm border border-gray-100 p-5"></div>
+                </section>
+
+                <!-- POINTS DE COLLECTE -->
+                <section id="points" class="section-content hidden space-y-6">
+                    <div class="sw-fade-in">
+                        <h1 class="text-2xl font-bold">Points de collecte</h1>
+                        <p class="text-sm text-gray-500 mt-1">Gestion des points de dépôt</p>
+                    </div>
+                    <button class="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm" onclick="chargerPointsCollecte()">Charger les points</button>
+                    <div id="pointsList" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4"></div>
+                    <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+                        <h3 class="font-semibold mb-2">Ajouter un point</h3>
+                        <div class="grid grid-cols-2 gap-4">
+                            <input type="text" id="newPointNom" placeholder="Nom" class="rounded-lg border border-gray-300 px-4 py-2">
+                            <input type="text" id="newPointType" placeholder="Type (ex: déchetterie)" class="rounded-lg border border-gray-300 px-4 py-2">
+                            <input type="text" id="newPointArrondissement" placeholder="Arrondissement" class="rounded-lg border border-gray-300 px-4 py-2">
+                            <input type="text" id="newPointLat" placeholder="Latitude" class="rounded-lg border border-gray-300 px-4 py-2">
+                            <input type="text" id="newPointLon" placeholder="Longitude" class="rounded-lg border border-gray-300 px-4 py-2">
+                            <input type="text" id="newPointDechets" placeholder="Types (plastique,metal,...)" class="rounded-lg border border-gray-300 px-4 py-2">
+                            <input type="text" id="newPointContact" placeholder="Contact" class="rounded-lg border border-gray-300 px-4 py-2">
+                        </div>
+                        <button class="mt-4 bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm" onclick="ajouterPointCollecte()">Ajouter</button>
+                    </div>
+                </section>
+
+                <!-- GROUPES -->
+                <section id="groupes" class="section-content hidden space-y-6">
+                    <div class="sw-fade-in">
+                        <h1 class="text-2xl font-bold">Groupes de signalements</h1>
+                        <p class="text-sm text-gray-500 mt-1">Détection des doublons</p>
+                    </div>
+                    <button class="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm" onclick="chargerGroupes()">Voir les groupes</button>
+                    <div id="groupesList" class="bg-white rounded-xl shadow-sm border border-gray-100 p-5"></div>
+                    <div id="groupePagination" class="pagination"></div>
+                </section>
+            </main>
+        </div>
+    </div>
+
+    <!-- Modale Paramètres -->
+    <div id="settingsModal" class="fixed inset-0 z-[9999] hidden items-center justify-center bg-black/50 p-4">
+        <div class="w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-800">
+            <div class="flex border-b border-gray-200 dark:border-gray-700">
+                <div class="w-1/3 bg-gray-50 p-4 border-r border-gray-200 dark:bg-gray-700 dark:border-gray-600">
+                    <button class="flex w-full items-center gap-2 rounded-lg bg-emerald-100 px-3 py-2 text-sm font-semibold text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300">
+                        <i data-lucide="settings" class="w-4 h-4"></i> Général
+                    </button>
+                    <button class="mt-2 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-600">
+                        <i data-lucide="user" class="w-4 h-4"></i> Profil
+                    </button>
+                    <button class="mt-2 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-600">
+                        <i data-lucide="database" class="w-4 h-4"></i> Données
+                    </button>
+                    <button class="mt-2 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-600">
+                        <i data-lucide="info" class="w-4 h-4"></i> À propos
+                    </button>
+                </div>
+                <div class="flex-1 p-6">
+                    <div class="flex items-center justify-between mb-6">
+                        <h2 class="text-lg font-semibold">Paramètres</h2>
+                        <button onclick="closeSettings()" class="text-gray-400 hover:text-gray-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+                    </div>
+                    <div class="space-y-4">
+                        <div>
+                            <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300">Langue (Language)</h3>
+                            <div class="mt-2 flex gap-2">
+                                <button onclick="setLanguage('fr')" id="lang-fr" class="flex-1 rounded-lg border-2 border-emerald-500 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 transition">🇫🇷 Français</button>
+                                <button onclick="setLanguage('en')" id="lang-en" class="flex-1 rounded-lg border-2 border-gray-200 px-4 py-2 text-sm font-semibold text-gray-500 transition hover:border-gray-300">🇬🇧 English</button>
+                            </div>
+                        </div>
+                        <div>
+                            <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300">Thème (Theme)</h3>
+                            <div class="mt-2 flex gap-2">
+                                <button onclick="setTheme('light')" id="theme-light" class="flex-1 rounded-lg border-2 border-gray-200 px-4 py-2 text-sm font-semibold text-gray-500 transition hover:border-gray-300">☀️ Clair</button>
+                                <button onclick="setTheme('dark')" id="theme-dark" class="flex-1 rounded-lg border-2 border-gray-200 px-4 py-2 text-sm font-semibold text-gray-500 transition hover:border-gray-300">🌙 Sombre</button>
+                            </div>
+                        </div>
+                        <div>
+                            <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300">Export CSV</h3>
+                            <div class="mt-2 flex gap-2">
+                                <button onclick="exportSignalementsCSV()" class="flex-1 bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm">Signalements</button>
+                                <button onclick="exportTourneesCSV()" class="flex-1 bg-blue-500 text-white px-4 py-2 rounded-lg text-sm">Tournées</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Conteneur des notifications -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <!-- Scripts -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
+    <script>
+        // ====== TRADUCTIONS COMPLÈTES ======
+        const translations = {
+            fr: {
+                login_title: "🔐 Connexion",
+                email: "Email",
+                password: "Mot de passe",
+                login: "Se connecter",
+                dashboard: "Tableau de bord",
+                signalements: "Signalements",
+                tournees: "Tournées",
+                agents: "Agents",
+                prix: "Prix de rachat",
+                points: "Points de collecte",
+                groupes: "Groupes",
+                logout: "Déconnexion",
+                home: "Accueil",
+                welcome: "Bonjour Roger, voici l'état des collectes",
+                total_signalements: "Total signalements",
+                critiques: "Critiques",
+                traites: "Traités",
+                agents_actifs: "Agents actifs",
+                note_cud: "💡 Note pour la CUD : Cette répartition aide la CUD à prioriser l'affectation des équipes et des bacs vers les arrondissements les plus sollicités.",
+                critique: "Critique",
+                moderee: "Modérée",
+                faible: "Faible",
+                hors_sujet: "Hors-sujet",
+                soumis: "Soumis",
+                valide: "Validé",
+                en_cours: "En cours",
+                traite: "Traité",
+                refuse: "Refusé"
+            },
+            en: {
+                login_title: "🔐 Login",
+                email: "Email",
+                password: "Password",
+                login: "Login",
+                dashboard: "Dashboard",
+                signalements: "Reports",
+                tournees: "Routes",
+                agents: "Agents",
+                prix: "Buyback Prices",
+                points: "Collection Points",
+                groupes: "Groups",
+                logout: "Logout",
+                home: "Home",
+                welcome: "Hello Roger, here is the collection status",
+                total_signalements: "Total Reports",
+                critiques: "Critical",
+                traites: "Treated",
+                agents_actifs: "Active Agents",
+                note_cud: "💡 Note for CUD: This breakdown helps CUD prioritize team and bin allocation to the most solicited districts.",
+                critique: "Critical",
+                moderee: "Moderate",
+                faible: "Low",
+                hors_sujet: "Off-topic",
+                soumis: "Submitted",
+                valide: "Validated",
+                en_cours: "In progress",
+                traite: "Treated",
+                refuse: "Refused"
+            }
+        };
+
+        let currentLang = localStorage.getItem('lang') || 'fr';
+
+        function t(key) {
+            return translations[currentLang][key] || translations['fr'][key] || key;
+        }
+
+        function applyLanguage(lang) {
+            currentLang = lang;
+            localStorage.setItem('lang', lang);
+            document.querySelectorAll('[data-i18n]').forEach(el => {
+                const key = el.getAttribute('data-i18n');
+                el.textContent = t(key);
+            });
+            // Mise à jour des styles des boutons
+            const btnFr = document.getElementById('lang-fr');
+            const btnEn = document.getElementById('lang-en');
+            if (btnFr) btnFr.className = lang === 'fr' ? "flex-1 rounded-lg border-2 border-emerald-500 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 transition" : "flex-1 rounded-lg border-2 border-gray-200 px-4 py-2 text-sm font-semibold text-gray-500 transition hover:border-gray-300";
+            if (btnEn) btnEn.className = lang === 'en' ? "flex-1 rounded-lg border-2 border-emerald-500 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 transition" : "flex-1 rounded-lg border-2 border-gray-200 px-4 py-2 text-sm font-semibold text-gray-500 transition hover:border-gray-300";
+            // Recharger les données dynamiques si besoin
+            chargerStats();
+            if (typeof chargerSignalements === 'function') chargerSignalements('soumis');
+        }
+
+        function setLanguage(lang) { applyLanguage(lang); }
+
+        // ====== THÈME ======
+        function setTheme(theme) {
+            localStorage.setItem('theme', theme);
+            if (theme === 'dark') {
+                document.documentElement.classList.add('dark');
+            } else {
+                document.documentElement.classList.remove('dark');
+            }
+            const btnLight = document.getElementById('theme-light');
+            const btnDark = document.getElementById('theme-dark');
+            if (btnLight) btnLight.className = theme === 'light' ? "flex-1 rounded-lg border-2 border-emerald-500 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 transition" : "flex-1 rounded-lg border-2 border-gray-200 px-4 py-2 text-sm font-semibold text-gray-500 transition hover:border-gray-300";
+            if (btnDark) btnDark.className = theme === 'dark' ? "flex-1 rounded-lg border-2 border-emerald-500 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 transition" : "flex-1 rounded-lg border-2 border-gray-200 px-4 py-2 text-sm font-semibold text-gray-500 transition hover:border-gray-300";
+        }
+
+        // ====== NOTIFICATIONS ======
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.innerHTML = `<i data-lucide="${type === 'error' ? 'alert-circle' : type === 'warning' ? 'alert-triangle' : 'info'}" class="w-5 h-5"></i><span>${message}</span>`;
+            container.appendChild(toast);
+            lucide.createIcons();
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                setTimeout(() => toast.remove(), 300);
+            }, 5000);
+        }
+
+        // ====== GESTION TOKEN & UTILISATEUR ======
+        let token = localStorage.getItem('token') || '';
+        let userName = "Gestionnaire";
+
+        function parseJwt(token) {
+            try {
+                const base64Url = token.split('.')[1];
+                const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+                const jsonPayload = decodeURIComponent(atob(base64).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''));
+                return JSON.parse(jsonPayload);
+            } catch (e) { return null; }
+        }
+
+        function setUserInfo() {
+            const payload = parseJwt(token);
+            if (payload && (payload.name || payload.email)) {
+                userName = payload.name || payload.email;
+                document.getElementById('userName').textContent = userName;
+                document.getElementById('userAvatar').textContent = userName.charAt(0).toUpperCase();
+            }
+        }
+
+        // ====== WEBSOCKET ======
+        function connectWebSocket() {
+            if (!token) return;
+            const ws = new WebSocket(`ws://${window.location.host}/ws`);
+            ws.onopen = () => console.log('WebSocket connecté');
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'nouveau_signalement') {
+                        showToast(`Nouveau signalement #${data.id} (${data.severity})`, data.severity === 'critique' ? 'warning' : 'info');
+                    } else if (data.type === 'traitement_termine') {
+                        showToast(`Signalement #${data.report_id} traité`, 'success');
+                    }
+                } catch (e) { console.error('Erreur WS', e); }
+            };
+            ws.onclose = () => setTimeout(connectWebSocket, 5000);
+        }
+
+        // ====== VARIABLES GLOBALES ======
+        let map;
+        let signalementLayers = [];
+        let currentRoutingControl = null;
+        const itemsPerPage = 10;
+        let currentSignalPage = 1;
+        let lastSignalementsData = [];
+        let currentGroupePage = 1;
+        let lastGroupesData = [];
+        const doualaBounds = L.latLngBounds([4.0, 9.65], [4.12, 9.80]);
+
+        const loaderOverlay = document.getElementById('loaderOverlay');
+        function showLoader() { loaderOverlay.classList.add('active'); }
+        function hideLoader() { loaderOverlay.classList.remove('active'); }
+
+        // Navigation
+        const sections = document.querySelectorAll('.section-content');
+        const navLinks = document.querySelectorAll('.nav-link');
+        const breadcrumb = document.getElementById('breadcrumb');
+
+        function showSection(sectionId) {
+            sections.forEach(sec => sec.classList.add('hidden'));
+            const target = document.getElementById(sectionId);
+            if (target) target.classList.remove('hidden');
+            navLinks.forEach(link => {
+                link.classList.remove('active');
+                if (link.dataset.section === sectionId) link.classList.add('active');
+            });
+            breadcrumb.textContent = t(sectionId);
+        }
+
+        navLinks.forEach(link => {
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                showSection(link.dataset.section);
+                if (link.dataset.section === 'dashboard') {
+                    chargerStats();
+                    chargerSignalementsCarte();
+                } else if (link.dataset.section === 'signalements') {
+                    chargerSignalements('soumis');
+                } else if (link.dataset.section === 'tournees') {
+                    chargerTournees();
+                } else if (link.dataset.section === 'agents') {
+                    chargerAgents();
+                } else if (link.dataset.section === 'prix') {
+                    chargerPrix();
+                } else if (link.dataset.section === 'points') {
+                    chargerPointsCollecte();
+                } else if (link.dataset.section === 'groupes') {
+                    chargerGroupes();
+                }
+            });
+        });
+
+        // ====== RECHERCHE FONCTIONNELLE ======
+        function handleSearch(query) {
+            query = query.toLowerCase().trim();
+            // Filtrer la liste des signalements affichée
+            if (lastSignalementsData.length > 0) {
+                const filtered = lastSignalementsData.filter(s => 
+                    s.waste_type?.toLowerCase().includes(query) ||
+                    s.arrondissement?.toLowerCase().includes(query) ||
+                    s.status?.toLowerCase().includes(query) ||
+                    s.severity?.toLowerCase().includes(query) ||
+                    `#${s.id}`.includes(query)
+                );
+                renderSignalementsList(filtered, 'signalementsFullList', 0, itemsPerPage);
+                renderPagination(filtered.length, currentSignalPage, 'signalementPagination', (p) => {
+                    currentSignalPage = p;
+                    const start = (currentSignalPage - 1) * itemsPerPage;
+                    const end = start + itemsPerPage;
+                    renderSignalementsList(filtered, 'signalementsFullList', start, end);
+                });
+            }
+            // Filtrer les tournées
+            const tourneeItems = document.querySelectorAll('#tourneesList .card');
+            tourneeItems.forEach(item => {
+                const text = item.textContent.toLowerCase();
+                item.style.display = text.includes(query) ? 'block' : 'none';
+            });
+            // Filtrer les agents
+            const agentItems = document.querySelectorAll('#agentsList .card');
+            agentItems.forEach(item => {
+                const text = item.textContent.toLowerCase();
+                item.style.display = text.includes(query) ? 'block' : 'none';
+            });
+        }
+
+        // ====== EXPORT CSV ======
+        async function exportSignalementsCSV() {
+            const resp = await fetch('/api/v1/signalements', { headers: { 'Authorization': 'Bearer ' + token } });
+            const data = await resp.json();
+            const signalements = Array.isArray(data) ? data : data.signalements;
+            if (!signalements || signalements.length === 0) { alert('Aucun signalement'); return; }
+            const headers = ['ID', 'Type', 'Sévérité', 'Statut', 'Latitude', 'Longitude', 'Arrondissement', 'Confiance', 'Date'];
+            const rows = signalements.map(s => [
+                s.id, s.waste_type || 'N/A', s.severity || 'N/A', s.status || 'N/A',
+                s.lat || '', s.lon || '', s.arrondissement || 'Non renseigné',
+                s.confidence != null ? (s.confidence * 100).toFixed(1) + '%' : '',
+                s.created_at ? new Date(s.created_at).toLocaleString() : ''
+            ]);
+            const csvContent = [headers.join(';'), ...rows.map(r => r.join(';'))].join('\n');
+            const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = 'signalements_export.csv';
+            link.click();
+        }
+
+        async function exportTourneesCSV() {
+            const resp = await fetch('/api/v1/tournees/en-cours', { headers: { 'Authorization': 'Bearer ' + token } });
+            const data = await resp.json();
+            const tournees = Array.isArray(data) ? data : data.tournees;
+            if (!tournees || tournees.length === 0) { alert('Aucune tournée'); return; }
+            const headers = ['ID', 'Agent ID', 'Arrondissement', 'Statut', 'Nb signalements', 'Date planifiée'];
+            const rows = tournees.map(t => [
+                t.id, t.agent_id, t.arrondissement || 'N/A', t.status,
+                t.nb_signalements || 0, t.planned_date ? new Date(t.planned_date).toLocaleDateString() : ''
+            ]);
+            const csvContent = [headers.join(';'), ...rows.map(r => r.join(';'))].join('\n');
+            const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = 'tournees_export.csv';
+            link.click();
+        }
+
+        // ====== GÉOCODAGE INVERSÉ (QUARTIERS) ======
+        const geocodeCache = {};
+        async function reverseGeocode(lat, lon) {
+            const key = `${lat.toFixed(5)},${lon.toFixed(5)}`;
+            if (geocodeCache[key]) return geocodeCache[key];
+            try {
+                const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`;
+                const resp = await fetch(url, { headers: { 'Accept-Language': 'fr' } });
+                const data = await resp.json();
+                let quartier = data.address?.suburb || data.address?.neighbourhood || 
+                               data.address?.city_district || data.address?.town || 
+                               data.address?.village || data.address?.city || 'Inconnu';
+                geocodeCache[key] = quartier;
+                return quartier;
+            } catch (e) { return 'Erreur'; }
+        }
+
+        // ====== AUTHENTIFICATION ======
+        async function login() {
+            showLoader();
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            try {
+                const resp = await fetch('/api/v1/auth/login', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+                const data = await resp.json();
+                if (data.access_token) {
+                    token = data.access_token;
+                    localStorage.setItem('token', token);
+                    setUserInfo();
+                    document.getElementById('loginStatus').textContent = '✅ ' + t('login_success');
+                    document.getElementById('loginCard').style.display = 'none';
+                    document.getElementById('postLogin').style.display = 'flex';
+                    chargerStats();
+                    chargerSignalementsCarte();
+                    if (!map) initMap();
+                    showSection('dashboard');
+                    connectWebSocket();
+                } else {
+                    document.getElementById('loginStatus').textContent = '❌ ' + (data.detail || 'Erreur');
+                }
+            } catch (e) {
+                console.error(e);
+                document.getElementById('loginStatus').textContent = '❌ ' + e.message;
+            } finally {
+                hideLoader();
+            }
+        }
+
+        function logout() {
+            token = '';
+            localStorage.removeItem('token');
+            document.getElementById('loginCard').style.display = 'block';
+            document.getElementById('postLogin').style.display = 'none';
+            document.getElementById('loginStatus').textContent = '';
+            if (map) {
+                map.remove();
+                map = null;
+            }
+        }
+
+        const savedToken = localStorage.getItem('token');
+        if (savedToken) {
+            token = savedToken;
+            setUserInfo();
+            document.getElementById('loginCard').style.display = 'none';
+            document.getElementById('postLogin').style.display = 'flex';
+            chargerStats();
+            if (!map) initMap();
+            showSection('dashboard');
+            connectWebSocket();
+        }
+
+        // ====== INITIALISATION CARTE ======
+        function initMap() {
+            if (map) return;
+            map = L.map('map', {
+                center: [4.055, 9.70],
+                zoom: 13,
+                maxBounds: doualaBounds,
+                minZoom: 11
+            });
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap'
+            }).addTo(map);
+            const legend = L.control({ position: 'bottomleft' });
+            legend.onAdd = function () {
+                const div = L.DomUtil.create('div', 'info legend');
+                div.innerHTML = '<strong>Légende</strong><br>' +
+                    '<span style="color:red">●</span> ' + t('critique') + '<br>' +
+                    '<span style="color:orange">●</span> ' + t('moderee') + '<br>' +
+                    '<span style="color:green">●</span> ' + t('faible') + '<br>' +
+                    '<span style="color:gray">●</span> ' + t('hors_sujet') + '<br>' +
+                    '<span style="color:blue">━━</span> ' + t('itineraire');
+                return div;
+            };
+            legend.addTo(map);
+        }
+
+        // ====== STATISTIQUES ======
+        async function chargerStats() {
+            showLoader();
+            try {
+                const resp = await fetch('/api/v1/stats', { headers: { 'Authorization': 'Bearer ' + token } });
+                const data = await resp.json();
+                document.getElementById('statTotal').textContent = data.total || 0;
+                document.getElementById('statCritiques').textContent = data.par_severite?.find(s => s.severity === 'critique')?.count || 0;
+                document.getElementById('statTraites').textContent = data.par_statut?.find(s => s.status === 'traite')?.count || 0;
+                document.getElementById('statAgents').textContent = data.agents_actifs || 0;
+                chargerGraphiques(data);
+                chargerRecentSignalements();
+            } catch (e) { console.error(e); }
+            finally { hideLoader(); }
+        }
+
+        function chargerGraphiques(data) {
+            if (data.par_arrondissement && data.par_arrondissement.length > 0) {
+                new Chart(document.getElementById('chartArrondissement'), {
+                    type: 'bar',
+                    data: {
+                        labels: data.par_arrondissement.map(a => a.arrondissement || 'N/A'),
+                        datasets: [{ label: 'Signalements', data: data.par_arrondissement.map(a => a.count), backgroundColor: '#059669', borderRadius: 6 }]
+                    },
+                    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+                });
+            }
+            if (data.par_severite && data.par_severite.length > 0) {
+                const colors = { critique: '#dc2626', moderee: '#f59e0b', faible: '#059669', 'hors-sujet': '#6b7280' };
+                new Chart(document.getElementById('chartSeverite'), {
+                    type: 'doughnut',
+                    data: {
+                        labels: data.par_severite.map(s => s.severity),
+                        datasets: [{
+                            data: data.par_severite.map(s => s.count),
+                            backgroundColor: data.par_severite.map(s => colors[s.severity] || '#ccc'),
+                            borderWidth: 0
+                        }]
+                    },
+                    options: { cutout: '60%', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+                });
+            }
+        }
+
+        async function chargerRecentSignalements() {
+            const resp = await fetch('/api/v1/signalements', { headers: { 'Authorization': 'Bearer ' + token } });
+            const data = await resp.json();
+            const signalements = Array.isArray(data) ? data : (data.signalements || []);
+            const container = document.getElementById('recentSignalements');
+            container.innerHTML = '';
+            signalements.slice(0, 5).forEach(s => {
+                const div = document.createElement('div');
+                div.className = 'px-5 py-4 flex items-center gap-3';
+                const badgeSeverity = s.severity === 'critique' ? 'bg-red-100 text-red-700' : s.severity === 'moderee' ? 'bg-orange-100 text-orange-700' : s.severity === 'faible' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700';
+                const badgeStatus = s.status === 'soumis' ? 'bg-blue-100 text-blue-700' : s.status === 'valide' ? 'bg-green-100 text-green-700' : s.status === 'en_cours' ? 'bg-orange-100 text-orange-700' : s.status === 'traite' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-700';
+                const imgHtml = s.photo_base64 ? `<img src="data:image/jpeg;base64,${s.photo_base64}" class="w-10 h-10 rounded-lg object-cover" onclick="window.open(this.src,'_blank')">` : '';
+                div.innerHTML = `
+                    ${imgHtml}
+                    <span class="font-mono text-sm text-gray-600 w-12">#${s.id}</span>
+                    <span class="flex-1 text-sm font-medium">${s.waste_type || 'N/A'}</span>
+                    <span class="text-xs px-2 py-1 rounded-full ${badgeSeverity}">${s.severity}</span>
+                    <span class="text-xs px-2 py-1 rounded-full ${badgeStatus}">${s.status}</span>
+                    <span class="text-xs text-gray-500">${new Date(s.created_at).toLocaleDateString()}</span>
+                    <span class="text-xs text-gray-500">${s.arrondissement || 'N/A'}</span>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        // ====== CARTE - SIGNALEMENTS ======
+        async function chargerSignalementsCarte() {
+            if (!token || !map) return;
+            map.eachLayer(layer => {
+                if (layer instanceof L.Marker || layer instanceof L.CircleMarker || layer instanceof L.Polyline) {
+                    map.removeLayer(layer);
+                }
+            });
+            const resp = await fetch('/api/v1/signalements', { headers: { 'Authorization': 'Bearer ' + token } });
+            const data = await resp.json();
+            const signalements = Array.isArray(data) ? data : (data.signalements || []);
+            const grouped = {};
+            signalements.forEach(s => {
+                if (s.lat && s.lon && s.lat !== 0 && s.lon !== 0) {
+                    const key = s.lat.toFixed(5) + ',' + s.lon.toFixed(5);
+                    if (!grouped[key]) grouped[key] = [];
+                    grouped[key].push(s);
+                }
+            });
+            Object.keys(grouped).forEach(key => {
+                const signals = grouped[key];
+                const s0 = signals[0];
+                // Si pas d'arrondissement, géocoder
+                if (!s0.arrondissement && s0.lat && s0.lon) {
+                    reverseGeocode(s0.lat, s0.lon).then(quartier => {
+                        s0.arrondissement = quartier;
+                        updatePopupContent();
+                    });
+                }
+                const couleur = s0.severity === 'critique' ? '#dc2626' : s0.severity === 'moderee' ? '#f59e0b' : s0.severity === 'faible' ? '#059669' : '#6b7280';
+                let popupContent = `<strong>Signalement #${s0.id}</strong><br>${s0.waste_type || 'N/A'} (${s0.severity})<br>${s0.status}<br>Quartier: ${s0.arrondissement || 'Détection...'}`;
+                if (s0.photo_base64) popupContent += `<br><img src="data:image/jpeg;base64,${s0.photo_base64}" style="width:100px;height:100px;object-fit:cover;border-radius:8px;margin-top:5px" onclick="window.open(this.src,'_blank')">`;
+                const marker = L.circleMarker([s0.lat, s0.lon], { radius: 10, color: couleur, fillOpacity: 0.7 });
+                marker.bindPopup(popupContent);
+                marker.addTo(map);
+                // stocker le marker pour mise à jour popup
+                marker._signalement = s0;
+            });
+        }
+
+        // ====== SIGNALEMENTS - LISTE + PAGINATION ======
+        function renderSignalementsList(data, containerId, start, end) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+            data.slice(start, end).forEach(s => {
+                const div = document.createElement('div');
+                div.className = 'px-5 py-4 flex flex-wrap items-center gap-3 border-b border-gray-100';
+                const badgeSeverity = s.severity === 'critique' ? 'bg-red-100 text-red-700' : s.severity === 'moderee' ? 'bg-orange-100 text-orange-700' : s.severity === 'faible' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700';
+                const badgeStatus = s.status === 'soumis' ? 'bg-blue-100 text-blue-700' : s.status === 'valide' ? 'bg-green-100 text-green-700' : s.status === 'en_cours' ? 'bg-orange-100 text-orange-700' : s.status === 'traite' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-700';
+                const imgHtml = s.photo_base64 ? `<img src="data:image/jpeg;base64,${s.photo_base64}" class="w-12 h-12 rounded-lg object-cover" onclick="window.open(this.src,'_blank')">` : '';
+                const quartier = s.arrondissement || 'Détection...';
+                div.innerHTML = `
+                    ${imgHtml}
+                    <span class="font-mono text-sm text-gray-600 w-12">#${s.id}</span>
+                    <span class="flex-1 text-sm font-medium">${s.waste_type || 'N/A'}</span>
+                    <span class="text-xs px-2 py-1 rounded-full ${badgeSeverity}">${s.severity}</span>
+                    <span class="text-xs px-2 py-1 rounded-full ${badgeStatus}">${s.status}</span>
+                    <span class="text-xs text-gray-500">${quartier}</span>
+                    <span class="text-xs text-gray-500">${new Date(s.created_at).toLocaleDateString()}</span>
+                    <div class="flex gap-1">
+                        <button onclick="valider(${s.id})" class="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-md"><i data-lucide="check" class="w-4 h-4"></i></button>
+                        <button onclick="reclasser(${s.id},'critique')" class="p-1.5 text-red-600 hover:bg-red-50 rounded-md"><i data-lucide="alert-triangle" class="w-4 h-4"></i></button>
+                        <button onclick="reclasser(${s.id},'moderee')" class="p-1.5 text-orange-600 hover:bg-orange-50 rounded-md"><i data-lucide="alert-circle" class="w-4 h-4"></i></button>
+                        <button onclick="refuser(${s.id})" class="p-1.5 text-gray-600 hover:bg-gray-50 rounded-md"><i data-lucide="x" class="w-4 h-4"></i></button>
+                    </div>
+                `;
+                container.appendChild(div);
+                // Géocoder si quartier manquant
+                if (!s.arrondissement && s.lat && s.lon) {
+                    reverseGeocode(s.lat, s.lon).then(q => {
+                        s.arrondissement = q;
+                        const quartierSpan = div.querySelector('.text-xs.text-gray-500:last-of-type');
+                        if (quartierSpan) quartierSpan.textContent = q;
+                    });
+                }
+            });
+            lucide.createIcons();
+        }
+
+        function renderPagination(total, currentPage, containerId, callback) {
+            const totalPages = Math.ceil(total / itemsPerPage);
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+            if (totalPages <= 1) return;
+            const prev = document.createElement('button');
+            prev.textContent = '◀ ' + t('previous');
+            prev.className = 'px-3 py-1.5 rounded-lg border border-gray-300 text-sm mr-2 disabled:opacity-50';
+            prev.disabled = currentPage === 1;
+            prev.onclick = () => callback(currentPage - 1);
+            const next = document.createElement('button');
+            next.textContent = t('next') + ' ▶';
+            next.className = 'px-3 py-1.5 rounded-lg border border-gray-300 text-sm disabled:opacity-50';
+            next.disabled = currentPage === totalPages;
+            next.onclick = () => callback(currentPage + 1);
+            const info = document.createElement('span');
+            info.textContent = `Page ${currentPage} / ${totalPages}`;
+            info.className = 'text-sm text-gray-600 mx-3';
+            container.appendChild(prev);
+            container.appendChild(info);
+            container.appendChild(next);
+        }
+
+        async function chargerSignalements(statut) {
+            showLoader();
+            try {
+                const resp = await fetch(`/api/v1/signalements?statut=${statut}`, { headers: { 'Authorization': 'Bearer ' + token } });
+                const data = await resp.json();
+                lastSignalementsData = Array.isArray(data) ? data : (data.signalements || []);
+                document.getElementById('signalementsCount').textContent = `${lastSignalementsData.length} ${t('results')}`;
+                currentSignalPage = 1;
+                renderSignalementsList(lastSignalementsData, 'signalementsFullList', 0, itemsPerPage);
+                renderPagination(lastSignalementsData.length, currentSignalPage, 'signalementPagination', changePage);
+            } catch (e) { console.error(e); }
+            finally { hideLoader(); }
+        }
+
+        function changePage(newPage) {
+            const totalPages = Math.ceil(lastSignalementsData.length / itemsPerPage);
+            if (newPage < 1 || newPage > totalPages) return;
+            currentSignalPage = newPage;
+            const start = (currentSignalPage - 1) * itemsPerPage;
+            const end = start + itemsPerPage;
+            renderSignalementsList(lastSignalementsData, 'signalementsFullList', start, end);
+            renderPagination(lastSignalementsData.length, currentSignalPage, 'signalementPagination', changePage);
+        }
+
+        // Actions signalements
+        async function valider(id) { const resp = await fetch(`/api/v1/signalements/${id}/valider`, { method: 'PUT', headers: { 'Authorization': 'Bearer ' + token } }); if (resp.ok) { chargerSignalements('soumis'); showToast(t('validated_signal'), 'success'); } }
+        async function reclasser(id, severity) { const resp = await fetch(`/api/v1/signalements/${id}/reclasser?nouvelle_severite=${severity}`, { method: 'PUT', headers: { 'Authorization': 'Bearer ' + token } }); if (resp.ok) { chargerSignalements('soumis'); showToast(t('reclassified'), 'info'); } }
+        async function refuser(id) { if (!confirm(t('confirm_refuse'))) return; const resp = await fetch(`/api/v1/signalements/${id}/statut?status=refuse`, { method: 'PUT', headers: { 'Authorization': 'Bearer ' + token } }); if (resp.ok) { chargerSignalements('soumis'); showToast(t('refused_signal'), 'warning'); } }
+
+        // ====== TOURNÉES ======
+        async function chargerTournees() {
+            const resp = await fetch('/api/v1/tournees/en-cours', { headers: { 'Authorization': 'Bearer ' + token } });
+            const data = await resp.json();
+            const tournees = Array.isArray(data) ? data : (data.tournees || []);
+            const container = document.getElementById('tourneesList');
+            container.innerHTML = '';
+            tournees.forEach(t => {
+                const card = document.createElement('div');
+                card.className = 'bg-white rounded-xl p-5 shadow-sm border border-gray-100 card-hover sw-fade-in';
+                card.innerHTML = `
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <div class="bg-emerald-100 rounded-xl p-2"><i data-lucide="truck" class="w-5 h-5 text-emerald-600"></i></div>
+                            <div>
+                                <p class="font-semibold text-sm">${t('tournee')} #${t.id}</p>
+                                <p class="text-xs text-gray-500">${t.arrondissement || 'N/A'}</p>
+                            </div>
+                        </div>
+                        <span class="text-xs px-2 py-1 rounded-full ${t.status === 'en_cours' ? 'bg-orange-100 text-orange-700' : t.status === 'planifiee' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700'}">${t.status}</span>
+                    </div>
+                    <div class="mt-4 flex justify-between text-sm">
+                        <span class="text-gray-500">${t('signalements')}</span>
+                        <span class="font-semibold">${t.nb_signalements || 0}</span>
+                    </div>
+                    <div class="mt-3 flex gap-2">
+                        <button onclick="voirTournee(${t.id})" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 rounded-lg text-xs font-medium">${t('view_route')}</button>
+                        <button onclick="supprimerTournee(${t.id})" class="bg-red-50 text-red-600 px-3 py-2 rounded-lg text-xs font-medium">${t('delete')}</button>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+            lucide.createIcons();
+        }
+
+        async function voirTournee(id) {
+            const resp = await fetch(`/api/v1/tournees/${id}/points`, { headers: { 'Authorization': 'Bearer ' + token } });
+            const points = await resp.json();
+            if (!Array.isArray(points) || points.length < 2) { alert(t('not_enough_points')); return; }
+            const validPoints = points.filter(p => p.lat && p.lon && p.lat !== 0 && p.lon !== 0);
+            afficherItineraire(validPoints, 'blue');
+            showSection('dashboard');
+        }
+
+        async function supprimerTournee(id) {
+            if (!confirm(t('confirm_delete'))) return;
+            const resp = await fetch(`/api/v1/tournees/${id}`, { method: 'DELETE', headers: { 'Authorization': 'Bearer ' + token } });
+            if (resp.ok) chargerTournees();
+        }
+
+        // ====== OPTIMISATION ======
+        async function optimiser() {
+            const arr = document.getElementById('arrondissement').value || '';
+            const nb = document.getElementById('nbVehicules').value || 1;
+            const cap = document.getElementById('capacite').value || 1000;
+            const max = document.getElementById('maxSignalements').value || 10;
+            const params = new URLSearchParams({ arrondissement: arr, nb_vehicules: nb, capacite_vehicule: cap, max_signalements: max });
+            const resp = await fetch(`/api/v1/tournees/optimiser-vrp?${params}`, { headers: { 'Authorization': 'Bearer ' + token } });
+            const data = await resp.json();
+            alert(t('optimisation_done'));
+            chargerTournees();
+        }
+
+        async function optimiserEtCreerTournee() {
+            const agentId = prompt(t('agent_id_prompt'));
+            if (!agentId) return;
+            const arr = document.getElementById('arrondissement').value || '';
+            const nb = document.getElementById('nbVehicules').value || 1;
+            const cap = document.getElementById('capacite').value || 1000;
+            const max = document.getElementById('maxSignalements').value || 10;
+            const params = new URLSearchParams({ arrondissement: arr, nb_vehicules: nb, capacite_vehicule: cap, max_signalements: max });
+            const resp = await fetch(`/api/v1/tournees/optimiser-vrp?${params}`, { headers: { 'Authorization': 'Bearer ' + token } });
+            const data = await resp.json();
+            if (!data.tournees || data.tournees.length === 0) { alert(t('no_route_generated')); return; }
+            const premierTour = data.tournees[0];
+            const signalementIds = premierTour.tournee.map(p => p.id);
+            const createResp = await fetch('/api/v1/tournees/creer', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+                body: JSON.stringify({ agent_id: parseInt(agentId), signalement_ids: signalementIds, date_planifiee: new Date().toISOString().split('T')[0] })
+            });
+            const result = await createResp.json();
+            alert(`${t('route_created')} ID: ${result.tournee_id}`);
+            chargerTournees();
+        }
+
+        // ====== AGENTS ======
+        async function chargerAgents() {
+            const resp = await fetch('/api/v1/users?role=agent', { headers: { 'Authorization': 'Bearer ' + token } });
+            const data = await resp.json();
+            const agents = Array.isArray(data) ? data : (data.users || []);
+            const container = document.getElementById('agentsList');
+            container.innerHTML = '';
+            agents.forEach(a => {
+                const card = document.createElement('div');
+                card.className = 'bg-white rounded-xl p-5 shadow-sm border border-gray-100 card-hover sw-fade-in';
+                card.innerHTML = `
+                    <div class="flex items-center gap-3">
+                        <div class="bg-emerald-100 rounded-full h-10 w-10 flex items-center justify-center text-emerald-700 font-semibold">${a.email[0]}</div>
+                        <div>
+                            <p class="font-semibold text-sm">${a.email}</p>
+                            <p class="text-xs text-gray-500">${t('agent')} #${a.id}</p>
+                        </div>
+                    </div>
+                    <p class="mt-4 text-sm text-gray-600">${t('district')}: ${a.arrondissement || 'N/A'}</p>
+                    <div class="mt-3 flex gap-2">
+                        <button class="flex-1 bg-gray-100 py-2 rounded-lg text-xs font-medium">${t('call')}</button>
+                        <button class="flex-1 bg-gray-100 py-2 rounded-lg text-xs font-medium">${t('message')}</button>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        async function creerAgent() {
+            const email = document.getElementById('newAgentEmail').value.trim();
+            const password = document.getElementById('newAgentPassword').value;
+            const arrondissement = document.getElementById('newAgentArrondissement').value.trim();
+            const type_agent = document.getElementById('newAgentType').value;
+            if (!email || !password) { alert(t('email_password_required')); return; }
+            const resp = await fetch('/api/v1/agents', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+                body: JSON.stringify({ email, password, arrondissement, type_agent })
+            });
+            if (resp.ok) { alert(t('agent_created')); chargerAgents(); } else alert(t('error_create'));
+        }
+
+        // ====== PRIX DE RACHAT ======
+        async function chargerPrix() {
+            const resp = await fetch('/api/v1/prix', { headers: { 'Authorization': 'Bearer ' + token } });
+            const data = await resp.json();
+            const prix = Array.isArray(data) ? data : data.prix;
+            const container = document.getElementById('prixList');
+            if (!prix || prix.length === 0) { container.innerHTML = '<p>' + t('no_price') + '</p>'; return; }
+            container.innerHTML = prix.map(p => `
+                <div class="flex items-center justify-between py-3 border-b border-gray-100">
+                    <span class="font-medium">${p.type_dechet}</span>
+                    <span class="text-sm text-gray-500">${p.ville || 'Douala'}</span>
+                    <input type="number" id="prix_${p.id}" value="${p.prix_kg}" step="5" class="w-24 rounded-lg border border-gray-300 px-3 py-2 text-sm">
+                    <button class="bg-emerald-600 text-white px-3 py-2 rounded-lg text-xs" onclick="updatePrix(${p.id})">${t('update')}</button>
+                </div>
+            `).join('');
+        }
+
+        async function updatePrix(id) {
+            const prix_kg = parseFloat(document.getElementById(`prix_${id}`).value);
+            if (isNaN(prix_kg)) return;
+            const resp = await fetch(`/api/v1/prix/${id}?prix_kg=${prix_kg}`, { method: 'PUT', headers: { 'Authorization': 'Bearer ' + token } });
+            if (resp.ok) { alert(t('price_updated')); chargerPrix(); } else alert(t('error'));
+        }
+
+        // ====== POINTS DE COLLECTE ======
+        async function chargerPointsCollecte() {
+            const resp = await fetch('/api/v1/points-collecte', { headers: { 'Authorization': 'Bearer ' + token } });
+            const data = await resp.json();
+            const points = Array.isArray(data) ? data : data.points;
+            const container = document.getElementById('pointsList');
+            if (!points || points.length === 0) { container.innerHTML = '<p>' + t('no_point') + '</p>'; return; }
+            container.innerHTML = points.map(p => `
+                <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100 card-hover">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h3 class="font-semibold">${p.nom}</h3>
+                            <p class="text-xs text-gray-500">${p.arrondissement || 'N/A'}</p>
+                        </div>
+                        <span class="bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full text-xs">${p.types_dechets ? p.types_dechets.join(', ') : 'Tout'}</span>
+                    </div>
+                    <button onclick="supprimerPointCollecte(${p.id})" class="mt-4 w-full bg-red-50 text-red-600 py-2 rounded-lg text-xs font-medium">${t('delete')}</button>
+                </div>
+            `).join('');
+        }
+
+        async function ajouterPointCollecte() {
+            const nom = document.getElementById('newPointNom').value.trim();
+            const type_activite = document.getElementById('newPointType').value.trim();
+            const arrondissement = document.getElementById('newPointArrondissement').value.trim();
+            const lat = parseFloat(document.getElementById('newPointLat').value);
+            const lon = parseFloat(document.getElementById('newPointLon').value);
+            const types_dechets = document.getElementById('newPointDechets').value.split(',').map(s => s.trim());
+            const contact = document.getElementById('newPointContact').value.trim();
+            if (!nom || isNaN(lat) || isNaN(lon)) { alert(t('point_required')); return; }
+            const resp = await fetch('/api/v1/points-collecte', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+                body: JSON.stringify({ nom, type_activite, arrondissement, lat, lon, types_dechets, contact })
+            });
+            if (resp.ok) { alert(t('point_added')); chargerPointsCollecte(); } else alert(t('error'));
+        }
+
+        async function supprimerPointCollecte(id) {
+            if (!confirm(t('confirm_delete'))) return;
+            const resp = await fetch(`/api/v1/points-collecte/${id}`, { method: 'DELETE', headers: { 'Authorization': 'Bearer ' + token } });
+            if (resp.ok) chargerPointsCollecte();
+        }
+
+        // ====== GROUPES ======
+        async function chargerGroupes() {
+            const resp = await fetch('/api/v1/signalements/groupes', { headers: { 'Authorization': 'Bearer ' + token } });
+            const data = await resp.json();
+            lastGroupesData = Array.isArray(data) ? data : (data.groupes || []);
+            const container = document.getElementById('groupesList');
+            container.innerHTML = '';
+            lastGroupesData.slice(0, 10).forEach(g => {
+                const div = document.createElement('div');
+                div.className = 'py-3 border-b border-gray-100 flex justify-between items-center';
+                div.innerHTML = `
+                    <span class="text-sm font-medium">${t('group')} #${g.duplicate_group_id || 'null'}</span>
+                    <span class="text-sm text-gray-500">${g.nb_signalements} ${t('signalements')}</span>
+                    <span class="text-xs px-2 py-1 rounded-full ${g.severity === 'critique' ? 'bg-red-100 text-red-700' : 'bg-gray-100'}">${g.severity || 'N/A'}</span>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        // ====== ITINÉRAIRE ======
+        function afficherItineraire(points, couleur = 'blue') {
+            if (!map) initMap();
+            if (currentRoutingControl) {
+                map.removeControl(currentRoutingControl);
+                currentRoutingControl = null;
+            }
+            const validPoints = points.filter(p => p.lat && p.lon && p.lat !== 0 && p.lon !== 0);
+            if (validPoints.length < 2) return;
+            currentRoutingControl = L.Routing.control({
+                waypoints: validPoints.map(p => L.latLng(p.lat, p.lon)),
+                lineOptions: { styles: [{ color: couleur, weight: 5, opacity: 0.8 }] },
+                addWaypoints: false,
+                routeWhileDragging: false,
+                showAlternatives: false
+            }).addTo(map);
+            currentRoutingControl.on('routesfound', function(e) {
+                const summary = e.routes[0].summary;
+                document.getElementById('routeInfo').innerHTML = `
+                    <div class="font-medium text-sm">🚚 ${t('route')}</div>
+                    <div class="text-xs text-gray-600">${t('distance')}: ${(summary.totalDistance/1000).toFixed(1)} km</div>
+                    <div class="text-xs text-gray-600">${t('time')}: ${Math.round(summary.totalTime/60)} min</div>
+                `;
+            });
+            const bounds = L.latLngBounds(validPoints.map(p => [p.lat, p.lon]));
+            map.fitBounds(bounds, { padding: [40, 40] });
+        }
+
+        // ====== PARAMÈTRES (MODALE) ======
+        function openSettings() {
+            document.getElementById('settingsModal').classList.remove('hidden');
+            document.getElementById('settingsModal').classList.add('flex');
+            lucide.createIcons();
+        }
+
+        function closeSettings() {
+            document.getElementById('settingsModal').classList.add('hidden');
+            document.getElementById('settingsModal').classList.remove('flex');
+        }
+
+        // ====== INITIALISATION ======
+        // Appliquer la langue sauvegardée
+        applyLanguage(currentLang);
+        // Appliquer le thème sauvegardé
+        const savedTheme = localStorage.getItem('theme') || 'light';
+        setTheme(savedTheme);
+
+        // Auto refresh
+        setInterval(() => {
+            if (token && map) {
+                chargerSignalementsCarte();
+                chargerTournees();
+            }
+        }, 30000);
+
+        // Exposer les fonctions nécessaires
+        window.login = login;
+        window.logout = logout;
+        window.showSection = showSection;
+        window.chargerStats = chargerStats;
+        window.chargerSignalements = chargerSignalements;
+        window.chargerTournees = chargerTournees;
+        window.chargerAgents = chargerAgents;
+        window.chargerPrix = chargerPrix;
+        window.chargerPointsCollecte = chargerPointsCollecte;
+        window.chargerGroupes = chargerGroupes;
+        window.chargerSignalementsCarte = chargerSignalementsCarte;
+        window.chargerToutSurCarte = chargerSignalementsCarte; // alias
+        window.optimiser = optimiser;
+        window.optimiserEtCreerTournee = optimiserEtCreerTournee;
+        window.voirTournee = voirTournee;
+        window.supprimerTournee = supprimerTournee;
+        window.supprimerPointCollecte = supprimerPointCollecte;
+        window.ajouterPointCollecte = ajouterPointCollecte;
+        window.creerAgent = creerAgent;
+        window.valider = valider;
+        window.reclasser = reclasser;
+        window.refuser = refuser;
+        window.updatePrix = updatePrix;
+        window.openSettings = openSettings;
+        window.closeSettings = closeSettings;
+        window.setLanguage = setLanguage;
+        window.setTheme = setTheme;
+        window.exportSignalementsCSV = exportSignalementsCSV;
+        window.exportTourneesCSV = exportTourneesCSV;
+        window.handleSearch = handleSearch;
+    </script>
+</body>
+</html>

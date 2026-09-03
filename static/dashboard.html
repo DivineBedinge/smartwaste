@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SmartWaste CM+ - Dashboard Municipal</title>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1e1e2f;
+            color: #fff;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            background: #2d2d44;
+            padding: 15px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 2px solid #4a4a6a;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        header h1 {
+            font-size: 1.3rem;
+            color: #4ade80;
+        }
+
+        .stats {
+            display: flex;
+            gap: 15px;
+            font-size: 0.85rem;
+            flex-wrap: wrap;
+        }
+
+        .stat-item {
+            background: #1e1e2f;
+            padding: 8px 12px;
+            border-radius: 8px;
+            border: 1px solid #4a4a6a;
+        }
+
+        .stat-item span {
+            color: #4ade80;
+            font-weight: bold;
+        }
+
+        .btn-refresh {
+            background: #4ade80;
+            color: #1e1e2f;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        .btn-refresh:hover {
+            background: #22c55e;
+        }
+
+        .main-container {
+            display: flex;
+            flex: 1;
+            min-height: 0;
+        }
+
+        #map {
+            flex: 2;
+            height: 100%;
+        }
+
+        #validation-panel {
+            width: 380px;
+            background: #2d2d44;
+            padding: 15px;
+            overflow-y: auto;
+            border-left: 2px solid #4a4a6a;
+        }
+
+        #validation-panel h2 {
+            font-size: 1.1rem;
+            color: #fbbf24;
+            margin-bottom: 15px;
+            position: sticky;
+            top: 0;
+            background: #2d2d44;
+            padding-bottom: 10px;
+            z-index: 10;
+        }
+
+        .hors-sujet-card {
+            background: #1e1e2f;
+            border: 1px solid #4a4a6a;
+            border-radius: 8px;
+            padding: 10px;
+            margin-bottom: 10px;
+            transition: all 0.3s ease;
+        }
+
+        .hors-sujet-card img {
+            width: 100%;
+            max-height: 150px;
+            object-fit: cover;
+            border-radius: 5px;
+            margin: 8px 0;
+            cursor: pointer;
+        }
+
+        .hors-sujet-card .actions {
+            display: flex;
+            gap: 5px;
+            flex-wrap: wrap;
+        }
+
+        .hors-sujet-card button {
+            flex: 1;
+            padding: 6px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.75rem;
+            font-weight: bold;
+            min-width: 60px;
+            transition: all 0.2s;
+        }
+
+        .hors-sujet-card button:hover {
+            opacity: 0.8;
+            transform: scale(1.05);
+        }
+
+        .hors-sujet-card button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-faible { background: #4ade80; color: #1e1e2f; }
+        .btn-moderee { background: #fbbf24; color: #1e1e2f; }
+        .btn-critique { background: #ef4444; color: #fff; }
+        .btn-rejeter { background: #6b7280; color: #fff; }
+
+        .legend {
+            background: #2d2d44;
+            padding: 10px 15px;
+            border-radius: 8px;
+            border: 1px solid #4a4a6a;
+            font-size: 0.85rem;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 5px 0;
+        }
+
+        .legend-color {
+            width: 15px;
+            height: 15px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .no-photo {
+            color: #6b7280;
+            font-size: 0.8rem;
+            font-style: italic;
+            padding: 10px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>🗑️ SmartWaste CM+ - Dashboard Municipal</h1>
+        <div class="stats">
+            <div class="stat-item">Signalements : <span id="total-signalements">0</span></div>
+            <div class="stat-item">Critiques : <span id="total-critiques">0</span></div>
+            <div class="stat-item">Hors sujets : <span id="total-hors-sujets">0</span></div>
+        </div>
+        <button class="btn-refresh" onclick="loadData()">🔄 Actualiser</button>
+    </header>
+
+    <div class="main-container">
+        <div id="map"></div>
+        <div id="validation-panel">
+            <h2>🔍 Validation des hors sujets</h2>
+            <div id="hors-sujets-list"></div>
+        </div>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <script>
+        // Initialiser la carte centrée sur Douala
+        const map = L.map('map').setView([4.0511, 9.7069], 12);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        const severityColors = {
+            'faible': '#4ade80',
+            'moderee': '#fbbf24',
+            'critique': '#ef4444',
+            'hors_sujet': '#6b7280'
+        };
+
+        const legend = L.control({ position: 'bottomright' });
+
+        legend.onAdd = function () {
+            const div = L.DomUtil.create('div', 'legend');
+            div.innerHTML = `
+                <strong>Sévérité</strong><br>
+                <div class="legend-item"><span class="legend-color" style="background:#4ade80"></span> Faible</div>
+                <div class="legend-item"><span class="legend-color" style="background:#fbbf24"></span> Modérée</div>
+                <div class="legend-item"><span class="legend-color" style="background:#ef4444"></span> Critique</div>
+                <div class="legend-item"><span class="legend-color" style="background:#6b7280"></span> Hors sujet</div>
+            `;
+            return div;
+        };
+
+        legend.addTo(map);
+
+        const signalementLayer = L.layerGroup().addTo(map);
+        const clusterLayer = L.layerGroup().addTo(map);
+
+        // Charger les données principales
+        async function loadData() {
+            signalementLayer.clearLayers();
+            clusterLayer.clearLayers();
+
+            try {
+                // Charger les signalements
+                const response = await fetch('/api/v1/heatmap');
+                const data = await response.json();
+
+                let total = 0;
+                let critiques = 0;
+
+                data.features.forEach(feature => {
+                    const { coordinates } = feature.geometry;
+                    const { severity, confidence, id } = feature.properties;
+
+                    const color = severityColors[severity] || '#6b7280';
+
+                    const marker = L.circleMarker([coordinates[1], coordinates[0]], {
+                        radius: 8,
+                        fillColor: color,
+                        color: '#fff',
+                        weight: 1,
+                        opacity: 1,
+                        fillOpacity: 0.8
+                    });
+
+                    marker.bindPopup(`
+                        <strong>Signalement #${id}</strong><br>
+                        Sévérité : ${severity}<br>
+                        Confiance : ${(confidence * 100).toFixed(1)}%
+                    `);
+
+                    marker.addTo(signalementLayer);
+
+                    total++;
+                    if (severity === 'critique') critiques++;
+                });
+
+                document.getElementById('total-signalements').textContent = total;
+                document.getElementById('total-critiques').textContent = critiques;
+
+                // Charger les clusters
+                const clustersResponse = await fetch('/api/v1/clusters?eps=0.01&min_points=1');
+                const clusters = await clustersResponse.json();
+
+                clusters.forEach(cluster => {
+                    const coords = cluster.centroid.replace('POINT(', '').replace(')', '').split(' ');
+                    const lng = parseFloat(coords[0]);
+                    const lat = parseFloat(coords[1]);
+
+                    const clusterMarker = L.circleMarker([lat, lng], {
+                        radius: Math.min(cluster.nb_signalements * 5, 25),
+                        fillColor: '#f97316',
+                        color: '#fff',
+                        weight: 2,
+                        opacity: 1,
+                        fillOpacity: 0.4
+                    });
+
+                    clusterMarker.bindPopup(`
+                        <strong>Cluster #${cluster.cluster_id}</strong><br>
+                        Signalements : ${cluster.nb_signalements}<br>
+                        Confiance moyenne : ${(cluster.confiance_moyenne * 100).toFixed(1)}%
+                    `);
+
+                    clusterMarker.addTo(clusterLayer);
+                });
+
+            } catch (error) {
+                console.error('Erreur lors du chargement des données:', error);
+                alert('Erreur lors du chargement des données. Vérifiez que l\'API est démarrée.');
+            }
+
+            // Charger les hors sujets
+            loadHorsSujets();
+        }
+
+        // Charger les hors sujets
+        async function loadHorsSujets() {
+            try {
+                const response = await fetch('/api/v1/signalements/hors-sujet');
+                const horsSujets = await response.json();
+
+                document.getElementById('total-hors-sujets').textContent = horsSujets.length;
+
+                const container = document.getElementById('hors-sujets-list');
+                container.innerHTML = '';
+
+                if (horsSujets.length === 0) {
+                    container.innerHTML = '<p style="color:#6b7280">Aucun hors sujet en attente</p>';
+                    return;
+                }
+
+                horsSujets.forEach(signalement => {
+                    const card = document.createElement('div');
+                    card.className = 'hors-sujet-card';
+                    card.id = `hors-sujet-${signalement.id}`;
+
+                    let imageHtml = '';
+                    if (signalement.photo_base64 && signalement.photo_base64.length > 100) {
+                        imageHtml = `
+                            <img src="data:image/jpeg;base64,${signalement.photo_base64}" 
+                                 alt="Signalement ${signalement.id}"
+                                 style="width:100%;max-height:150px;object-fit:cover;border-radius:5px;margin:8px 0;cursor:pointer"
+                                 onclick="window.open(this.src, '_blank')">
+                        `;
+                    } else {
+                        imageHtml = '<div class="no-photo">📷 Pas de photo disponible</div>';
+                    }
+
+                    card.innerHTML = `
+                        <strong>#${signalement.id}</strong> 
+                        <span style="color:#6b7280">(${(signalement.confidence * 100).toFixed(1)}%)</span>
+                        ${imageHtml}
+                        <div class="actions">
+                            <button class="btn-faible" onclick="reclasser(${signalement.id}, 'faible')">Faible</button>
+                            <button class="btn-moderee" onclick="reclasser(${signalement.id}, 'moderee')">Modérée</button>
+                            <button class="btn-critique" onclick="reclasser(${signalement.id}, 'critique')">Critique</button>
+                            <button class="btn-rejeter" onclick="rejeter(${signalement.id})">Rejeter</button>
+                        </div>
+                    `;
+
+                    container.appendChild(card);
+                });
+            } catch (error) {
+                console.error('Erreur chargement hors sujets:', error);
+            }
+        }
+
+        // Reclasser un signalement
+        async function reclasser(id, nouvelleSeverite) {
+            const card = document.getElementById(`hors-sujet-${id}`);
+            if (card) {
+                card.style.opacity = '0.5';
+                const buttons = card.querySelectorAll('button');
+                buttons.forEach(btn => btn.disabled = true);
+            }
+
+            try {
+                const response = await fetch(`/api/v1/signalements/${id}/reclasser?nouvelle_severite=${nouvelleSeverite}`, {
+                    method: 'PUT'
+                });
+
+                if (response.ok) {
+                    // Retirer la carte immédiatement
+                    if (card) {
+                        card.remove();
+                    }
+                    
+                    // Mettre à jour le compteur
+                    const totalHorsSujets = document.getElementById('total-hors-sujets');
+                    totalHorsSujets.textContent = Math.max(0, parseInt(totalHorsSujets.textContent) - 1);
+
+                    // Recharger les données de la carte
+                    loadData();
+                } else {
+                    if (card) {
+                        card.style.opacity = '1';
+                        const buttons = card.querySelectorAll('button');
+                        buttons.forEach(btn => btn.disabled = false);
+                    }
+                    alert('Erreur lors du reclassement');
+                }
+            } catch (error) {
+                console.error('Erreur:', error);
+                if (card) {
+                    card.style.opacity = '1';
+                    const buttons = card.querySelectorAll('button');
+                    buttons.forEach(btn => btn.disabled = false);
+                }
+                alert('Erreur lors du reclassement');
+            }
+        }
+
+        // Rejeter un signalement
+        async function rejeter(id) {
+            const card = document.getElementById(`hors-sujet-${id}`);
+            if (card) {
+                card.style.opacity = '0.5';
+                const buttons = card.querySelectorAll('button');
+                buttons.forEach(btn => btn.disabled = true);
+            }
+
+            try {
+                const response = await fetch(`/api/v1/signalements/${id}/statut?status=rejete_hors_sujet`, {
+                    method: 'PUT'
+                });
+
+                if (response.ok) {
+                    // Retirer la carte immédiatement
+                    if (card) {
+                        card.remove();
+                    }
+                    
+                    // Mettre à jour le compteur
+                    const totalHorsSujets = document.getElementById('total-hors-sujets');
+                    totalHorsSujets.textContent = Math.max(0, parseInt(totalHorsSujets.textContent) - 1);
+
+                    // Recharger les données de la carte
+                    loadData();
+                } else {
+                    if (card) {
+                        card.style.opacity = '1';
+                        const buttons = card.querySelectorAll('button');
+                        buttons.forEach(btn => btn.disabled = false);
+                    }
+                    alert('Erreur lors du rejet');
+                }
+            } catch (error) {
+                console.error('Erreur:', error);
+                if (card) {
+                    card.style.opacity = '1';
+                    const buttons = card.querySelectorAll('button');
+                    buttons.forEach(btn => btn.disabled = false);
+                }
+                alert('Erreur lors du rejet');
+            }
+        }
+
+        // Charger tout au démarrage
+        loadData();
+
+        // Recharger toutes les 30 secondes
+        setInterval(loadData, 30000);
+    </script>
+</body>
+</html>

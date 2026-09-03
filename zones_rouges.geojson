@@ -1,0 +1,26 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {"type":"Feature","geometry":{"type":"Point","coordinates":[9.7034410,4.0612599]},"properties":{"id":1,"nom":"Deido / Ange Raphaël"}},
+    {"type":"Feature","geometry":{"type":"Point","coordinates":[9.7035585,4.0613686]},"properties":{"id":2,"nom":"Deido / Ange Raphaël"}},
+    {"type":"Feature","geometry":{"type":"Point","coordinates":[9.7044657,4.0610788]},"properties":{"id":3,"nom":"Deido / Ange Raphaël"}},
+    {"type":"Feature","geometry":{"type":"Point","coordinates":[9.6903006,4.0459563]},"properties":{"id":4,"nom":"Bepanda / Drains"}},
+    {"type":"Feature","geometry":{"type":"Point","coordinates":[9.6902720,4.0450969]},"properties":{"id":5,"nom":"Bepanda / Drains"}},
+    {"type":"Feature","geometry":{"type":"Point","coordinates":[9.6618355,4.0834866]},"properties":{"id":6,"nom":"Bonabéri / Saker"}},
+    {"type":"Feature","geometry":{"type":"Point","coordinates":[9.7731337,4.0137562]},"properties":{"id":7,"nom":"PK / Zone industrielle"}},
+    {"type":"Feature","geometry":{"type":"Point","coordinates":[9.7118440,4.0418218]},"properties":{"id":8,"nom":"New Bell / Brazzaville"}},
+    {"type":"Feature","geometry":{"type":"Point","coordinates":[9.7123544,4.0416219]},"properties":{"id":9,"nom":"New Bell / Brazzaville"}},
+    {"type":"Feature","geometry":{"type":"Point","coordinates":[9.7120625,4.0413206]},"properties":{"id":10,"nom":"New Bell / Brazzaville"}},
+    {"type":"Feature","geometry":{"type":"Point","coordinates":[9.7027772,4.0502579]},"properties":{"id":11,"nom":"Akwa / Rond-point Deido"}},
+    {"type":"Feature","geometry":{"type":"Point","coordinates":[9.7175272,4.0413172]},"properties":{"id":12,"nom":"New Bell / Marché"}},
+    {"type":"Feature","geometry":{"type":"Point","coordinates":[9.7213762,4.0423044]},"properties":{"id":13,"nom":"New Bell / Marché"}},
+    {"type":"Feature","geometry":{"type":"Point","coordinates":[9.6647876,4.0865595]},"properties":{"id":14,"nom":"Bonabéri / Quatre Étages"}},
+    {"type":"Feature","geometry":{"type":"Point","coordinates":[9.6672333,4.0841656]},"properties":{"id":15,"nom":"Bonabéri / Quatre Étages"}},
+    {"type":"Feature","geometry":{"type":"Point","coordinates":[9.6692045,4.0811392]},"properties":{"id":16,"nom":"Bonabéri / Mambanda"}},
+    {"type":"Feature","geometry":{"type":"Point","coordinates":[9.7353805,4.0763015]},"properties":{"id":17,"nom":"Logbessou / PK"}},
+    {"type":"Feature","geometry":{"type":"Point","coordinates":[9.7351328,4.0759004]},"properties":{"id":18,"nom":"Logbessou / PK"}},
+    {"type":"Feature","geometry":{"type":"Point","coordinates":[9.7351083,4.0762225]},"properties":{"id":19,"nom":"Logbessou / PK"}},
+    {"type":"Feature","geometry":{"type":"Point","coordinates":[9.7346986,4.0773253]},"properties":{"id":20,"nom":"Logbessou / PK"}},
+    {"type":"Feature","geometry":{"type":"Point","coordinates":[9.7344002,4.0781181]},"properties":{"id":21,"nom":"Logbessou / PK"}}
+  ]
+}

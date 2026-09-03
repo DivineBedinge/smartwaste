@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>SmartWaste CM+ - Gestionnaire Map</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { font-family: Arial; margin: 20px; }
+        .card { background: #fff; padding: 15px; border-radius: 8px; margin-bottom: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .btn { padding: 8px 16px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        input { padding: 8px; margin: 4px 0; width: 100%; }
+        #map { height: 500px; border-radius: 8px; }
+    </style>
+</head>
+<body>
+    <h2>🗑️ Positions des agents</h2>
+
+    <div class="card">
+        <h3>Token Admin</h3>
+        <input type="text" id="tokenInput" placeholder="Collez votre token admin ici">
+        <button class="btn" onclick="setToken()">Enregistrer le token</button>
+    </div>
+
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        const map = L.map('map').setView([4.05,9.70],12);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OSM'}).addTo(map);
+        let token = localStorage.getItem('token') || '';
+
+        function setToken() {
+            token = document.getElementById('tokenInput').value.trim();
+            localStorage.setItem('token', token);
+            alert('Token enregistré');
+            chargerPositions();
+        }
+
+        async function chargerPositions() {
+            if (!token) return;
+            const resp = await fetch('/api/v1/gestionnaire/agents-positions', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const data = await resp.json();
+            
+            // Nettoyer la carte
+            map.eachLayer(layer => {
+                if (layer instanceof L.Marker) map.removeLayer(layer);
+            });
+
+            // Ajouter les marqueurs
+            data.forEach(agent => {
+                L.marker([agent.lat, agent.lon]).addTo(map)
+                 .bindPopup(`Agent #${agent.agent_id} - ${new Date(agent.timestamp).toLocaleTimeString()}`);
+            });
+        }
+
+        // Recharger toutes les 5 secondes
+        setInterval(chargerPositions, 5000);
+        chargerPositions();
+    </script>
+</body>
+</html>

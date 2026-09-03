@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Suivi de mon signalement</title>
+</head>
+<body>
+    <h2>Suivi du signalement #<span id="reportId">?</span></h2>
+    <div id="status">Chargement...</div>
+    <script>
+        const params = new URLSearchParams(window.location.search);
+        const reportId = params.get('id');
+        document.getElementById('reportId').textContent = reportId;
+
+        async function fetchStatus() {
+            const resp = await fetch(`/api/v1/signalements/${reportId}`);
+            const data = await resp.json();
+            document.getElementById('status').innerText = `Statut actuel : ${data.status}`;
+        }
+        setInterval(fetchStatus, 5000);
+        fetchStatus();
+    </script>
+</body>
+</html>

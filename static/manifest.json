@@ -1,0 +1,21 @@
+{
+  "name": "SmartWaste CM+",
+  "short_name": "SmartWaste",
+  "description": "Gestion participative des déchets à Douala",
+  "start_url": "/citoyen",
+  "display": "standalone",
+  "background_color": "#1e1e2f",
+  "theme_color": "#4ade80",
+  "icons": [
+    {
+      "src": "/static/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/static/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

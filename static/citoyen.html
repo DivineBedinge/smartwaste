@@ -1,0 +1,932 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SmartWaste Citizen - Douala</title>
+    <meta name="theme-color" content="#059669">
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        .sw-fade-in { animation: fadeIn 0.4s ease; }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .toast-container { position: fixed; top: 20px; right: 20px; z-index: 10000; display: flex; flex-direction: column; gap: 10px; }
+        .toast { background: white; border-left: 4px solid #059669; padding: 12px 16px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: flex; align-items: center; gap: 10px; animation: slideIn 0.3s ease; }
+        .toast.error { border-left-color: #ef4444; }
+        .toast.warning { border-left-color: #f59e0b; }
+        @keyframes slideIn { from { opacity: 0; transform: translateX(50px); } to { opacity: 1; transform: translateX(0); } }
+        #map { height: 250px; border-radius: 12px; }
+        #mapDetail { height: 200px; border-radius: 12px; }
+        @media (min-width: 768px) {
+            .app-container { max-width: 480px; margin: 0 auto; box-shadow: 0 0 20px rgba(0,0,0,0.1); min-height: 100vh; }
+        }
+        .message-bubble { max-width: 75%; padding: 10px 14px; border-radius: 16px; margin-bottom: 8px; word-wrap: break-word; }
+        .message-user { background: #059669; color: white; margin-left: auto; border-bottom-right-radius: 4px; }
+        .message-bot { background: #f3f4f6; color: #1f2937; margin-right: auto; border-bottom-left-radius: 4px; }
+        .message-image { max-width: 100%; border-radius: 12px; margin-top: 5px; }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800 font-sans">
+    <div class="app-container bg-gray-50 relative">
+
+        <!-- Spinner -->
+        <div id="loaderOverlay" class="fixed inset-0 bg-white/70 hidden items-center justify-center z-50">
+            <div class="spinner border-4 border-gray-200 border-t-emerald-600 rounded-full w-12 h-12 animate-spin"></div>
+        </div>
+
+        <!-- Login -->
+        <div class="card bg-white rounded-xl shadow-sm p-6 mt-10 mx-4" id="loginCard">
+            <h2 class="text-2xl font-bold mb-4">🔐 Connexion</h2>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium">Email</label>
+                    <input type="email" id="email" placeholder="citoyen@exemple.cm" class="mt-1 w-full rounded-lg border border-gray-300 px-4 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium">Mot de passe</label>
+                    <input type="password" id="password" placeholder="********" class="mt-1 w-full rounded-lg border border-gray-300 px-4 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                </div>
+                <button class="w-full bg-emerald-600 text-white py-2 rounded-lg hover:bg-emerald-700" onclick="login()">Se connecter</button>
+                <span id="loginStatus" class="text-sm"></span>
+                <div class="text-center mt-3">
+                    <button onclick="showRegister()" class="text-emerald-600 hover:underline text-sm">Créer un compte citoyen</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Register -->
+        <div class="card bg-white rounded-xl shadow-sm p-6 mt-10 mx-4 hidden" id="registerCard">
+            <h2 class="text-2xl font-bold mb-4">📝 Créer un compte</h2>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium">Nom complet</label>
+                    <input type="text" id="regNom" placeholder="Votre nom" class="mt-1 w-full rounded-lg border border-gray-300 px-4 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium">Email</label>
+                    <input type="email" id="regEmail" placeholder="exemple@email.com" class="mt-1 w-full rounded-lg border border-gray-300 px-4 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium">Mot de passe</label>
+                    <input type="password" id="regPassword" placeholder="********" class="mt-1 w-full rounded-lg border border-gray-300 px-4 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium">Arrondissement (optionnel)</label>
+                    <input type="text" id="regArrondissement" placeholder="Ex: Douala V" class="mt-1 w-full rounded-lg border border-gray-300 px-4 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                </div>
+                <button class="w-full bg-emerald-600 text-white py-2 rounded-lg hover:bg-emerald-700" onclick="registerCitoyen()">Créer mon compte</button>
+                <span id="registerStatus" class="text-sm"></span>
+                <div class="text-center mt-3">
+                    <button onclick="showLogin()" class="text-emerald-600 hover:underline text-sm">J'ai déjà un compte</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Interface après connexion -->
+        <div id="postLogin" style="display:none;" class="flex flex-col min-h-screen">
+            <!-- Header -->
+            <header class="sticky top-0 z-30 bg-white/90 backdrop-blur border-b border-gray-200 px-4 py-3 flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <div class="bg-emerald-600 rounded-xl p-2"><i data-lucide="recycle" class="w-5 h-5 text-white"></i></div>
+                    <div>
+                        <p class="font-bold text-sm">SmartWaste</p>
+                        <p class="text-xs text-gray-500">Citoyen · Douala</p>
+                    </div>
+                </div>
+                <button onclick="openNotifications()" class="relative p-2 rounded-lg border border-gray-200 bg-white text-gray-500 hover:text-gray-700">
+                    <i data-lucide="bell" class="w-5 h-5"></i>
+                    <span id="notifCount" class="absolute top-1 right-1 w-2 h-2 rounded-full bg-red-500 ring-2 ring-white"></span>
+                </button>
+                <div class="flex items-center gap-2">
+                    <div class="bg-emerald-600 text-white rounded-full h-8 w-8 flex items-center justify-center font-semibold text-sm" id="userAvatar">U</div>
+                    <div class="leading-tight">
+                        <p class="text-sm font-medium" id="userName">Citoyen</p>
+                        <p class="text-xs text-gray-500">Mon profil</p>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Main Content -->
+            <main class="flex-1 p-4 pb-20 space-y-6">
+                <!-- Accueil -->
+                <section id="accueil" class="section-content space-y-6">
+                    <div class="sw-fade-in">
+                        <h1 class="text-2xl font-bold">Bonjour 👋</h1>
+                        <p class="text-sm text-gray-500 mt-1">Que souhaitez-vous faire aujourd'hui ?</p>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100 card-hover sw-fade-in">
+                            <span class="bg-emerald-100 text-emerald-600 rounded-xl p-2"><i data-lucide="camera" class="w-6 h-6"></i></span>
+                            <p class="mt-3 text-sm font-semibold">Signaler un déchet</p>
+                            <p class="text-xs text-gray-500">Prenez une photo et envoyez.</p>
+                            <button onclick="showSection('signaler')" class="mt-3 w-full bg-emerald-600 text-white py-2 rounded-lg text-xs">Commencer</button>
+                        </div>
+                        <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100 card-hover sw-fade-in">
+                            <span class="bg-blue-100 text-blue-600 rounded-xl p-2"><i data-lucide="list" class="w-6 h-6"></i></span>
+                            <p class="mt-3 text-sm font-semibold">Mes signalements</p>
+                            <p class="text-xs text-gray-500">Suivez l'avancement.</p>
+                            <button onclick="showSection('mes-signalements')" class="mt-3 w-full bg-blue-500 text-white py-2 rounded-lg text-xs">Voir</button>
+                        </div>
+                    </div>
+                    <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100 sw-fade-in">
+                        <h3 class="font-semibold mb-2">Vos points</h3>
+                        <p class="text-3xl font-bold text-emerald-600" id="pointsCount">0</p>
+                        <p class="text-xs text-gray-500">Points accumulés cette année</p>
+                    </div>
+                </section>
+
+                <!-- Signaler -->
+                <section id="signaler" class="section-content hidden space-y-6">
+                    <h2 class="text-xl font-bold">📸 Signaler un dépôt sauvage</h2>
+                    <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+                        <label class="block text-sm font-medium mb-2">Photo du déchet (obligatoire)</label>
+                        <input type="file" id="photoInput" accept="image/*" capture="environment" class="w-full rounded-lg border border-gray-300 px-4 py-2 mb-4">
+                        <div id="photoPreview" class="hidden mb-4"><img id="previewImg" class="w-full h-48 object-cover rounded-lg" /></div>
+                        <label class="block text-sm font-medium mb-2">Description (optionnel)</label>
+                        <textarea id="description" rows="3" class="w-full rounded-lg border border-gray-300 px-4 py-2" placeholder="Décrivez ce que vous voyez..."></textarea>
+                        <button onclick="envoyerSignalement()" class="mt-4 w-full bg-emerald-600 text-white py-2 rounded-lg hover:bg-emerald-700">Envoyer</button>
+                        <p id="signalStatus" class="text-sm mt-2"></p>
+                    </div>
+                </section>
+
+                <!-- Mes signalements -->
+                <section id="mes-signalements" class="section-content hidden space-y-6">
+                    <h2 class="text-xl font-bold">📋 Mes signalements</h2>
+                    <div class="flex gap-2">
+                        <input type="text" placeholder="Rechercher..." id="searchInput" class="flex-1 rounded-lg border border-gray-300 px-4 py-2" oninput="filterReports()">
+                        <button class="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm" onclick="chargerMesSignalements()">Rafraîchir</button>
+                    </div>
+                    <div class="flex gap-2 pb-2" id="filterTabs"></div>
+                    <div id="mesSignalementsList" class="space-y-4"></div>
+                </section>
+
+                <!-- Chatbot -->
+                <section id="chatbot" class="section-content hidden space-y-6">
+                    <h2 class="text-xl font-bold">💬 Assistant SmartWaste</h2>
+                    <div class="bg-white rounded-xl p-4 shadow-sm border border-gray-100 h-[450px] flex flex-col">
+                        <div id="chatMessages" class="flex-1 overflow-y-auto space-y-3 p-2">
+                            <div class="message-bubble message-bot">Bonjour ! Comment puis-je vous aider ?</div>
+                        </div>
+                        <div id="chatPreviewContainer" class="hidden mt-2 mb-2">
+                            <div class="relative inline-block">
+                                <img id="chatPreviewImg" class="h-16 w-16 rounded-lg border border-gray-300 object-cover" />
+                                <button onclick="clearChatImage()" class="absolute -right-2 -top-2 bg-gray-700 text-white rounded-full p-1 text-xs">✕</button>
+                            </div>
+                        </div>
+                        <div class="mt-3 flex gap-2 items-center border-t border-gray-200 pt-3">
+                            <input type="file" id="chatImageInput" accept="image/*" class="hidden" onchange="previewChatImage()">
+                            <button onclick="document.getElementById('chatImageInput').click()" class="p-2 rounded-lg border border-gray-300 text-gray-500 hover:text-gray-700"><i data-lucide="image" class="w-5 h-5"></i></button>
+                            <input type="text" id="chatInput" placeholder="Écrivez votre question..." class="flex-1 rounded-lg border border-gray-300 px-4 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500" onkeydown="handleChatKey(event)">
+                            <button onclick="envoyerMessageChat()" class="p-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"><i data-lucide="send" class="w-5 h-5"></i></button>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Abonnement -->
+                <section id="abonnement" class="section-content hidden space-y-6">
+                    <h2 class="text-xl font-bold">📅 Planifier une collecte régulière</h2>
+                    <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium">Fréquence</label>
+                            <select id="frequenceSelect" class="mt-1 w-full rounded-lg border border-gray-300 px-4 py-2">
+                                <option value="hebdo">Hebdomadaire</option>
+                                <option value="bimensuel">Bimensuel</option>
+                                <option value="mensuel">Mensuel</option>
+                            </select>
+                        </div>
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium">Notes (accès, contact...)</label>
+                            <input type="text" id="aboNotes" placeholder="Ex: portail vert, sonnette" class="mt-1 w-full rounded-lg border border-gray-300 px-4 py-2">
+                        </div>
+                        <button onclick="creerAbonnement()" class="w-full bg-emerald-600 text-white py-2 rounded-lg hover:bg-emerald-700">S'abonner</button>
+                    </div>
+                </section>
+
+                <!-- Points de collecte -->
+                <section id="points" class="section-content hidden space-y-6">
+                    <h2 class="text-xl font-bold">📍 Points de collecte</h2>
+                    <button class="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm" onclick="trouverPointProche()">Trouver le plus proche</button>
+                    <div id="map" class="bg-white rounded-xl shadow-sm border border-gray-100"></div>
+                </section>
+
+                <!-- Profil -->
+                <section id="profil" class="section-content hidden space-y-6">
+                    <h2 class="text-xl font-bold">👤 Mon profil</h2>
+                    <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+                        <div class="flex items-center gap-3">
+                            <div class="bg-emerald-100 rounded-full h-12 w-12 flex items-center justify-center text-emerald-700 font-semibold" id="profileAvatar">U</div>
+                            <div>
+                                <p class="font-semibold" id="profileName">Citoyen</p>
+                                <p class="text-xs text-gray-500" id="profileEmail">email</p>
+                            </div>
+                        </div>
+                        <div class="mt-5 grid grid-cols-2 gap-4">
+                            <div class="bg-gray-50 p-4 rounded-lg">
+                                <p class="text-xs text-gray-500">Signalements</p>
+                                <p class="text-xl font-bold" id="profileReports">0</p>
+                            </div>
+                            <div class="bg-gray-50 p-4 rounded-lg">
+                                <p class="text-xs text-gray-500">Points</p>
+                                <p class="text-xl font-bold text-emerald-600" id="profilePoints">0</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+                        <h3 class="font-semibold mb-2">Langue</h3>
+                        <div class="flex gap-2">
+                            <button onclick="setLanguage('fr')" id="lang-fr" class="flex-1 rounded-lg border-2 border-emerald-500 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700">🇫🇷 Français</button>
+                            <button onclick="setLanguage('en')" id="lang-en" class="flex-1 rounded-lg border-2 border-gray-200 px-4 py-2 text-sm font-semibold text-gray-500">🇬🇧 English</button>
+                        </div>
+                    </div>
+                    <button onclick="logout()" class="w-full bg-red-50 text-red-600 py-2 rounded-lg text-sm font-medium">Se déconnecter</button>
+                </section>
+            </main>
+
+            <!-- Bottom Navigation -->
+            <nav class="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-2 shadow-lg z-40">
+                <div class="max-w-md mx-auto flex justify-around text-center">
+                    <a href="#" data-section="accueil" class="nav-link active text-emerald-600 flex flex-col items-center text-xs gap-1 font-medium">
+                        <i data-lucide="home" class="w-5 h-5"></i> Accueil
+                    </a>
+                    <a href="#" data-section="signaler" class="nav-link text-gray-400 hover:text-emerald-600 flex flex-col items-center text-xs gap-1">
+                        <i data-lucide="camera" class="w-5 h-5"></i> Signaler
+                    </a>
+                    <a href="#" data-section="mes-signalements" class="nav-link text-gray-400 hover:text-emerald-600 flex flex-col items-center text-xs gap-1">
+                        <i data-lucide="list" class="w-5 h-5"></i> Mes signalements
+                    </a>
+                    <a href="#" data-section="chatbot" class="nav-link text-gray-400 hover:text-emerald-600 flex flex-col items-center text-xs gap-1">
+                        <i data-lucide="message-circle" class="w-5 h-5"></i> Chatbot
+                    </a>
+                    <a href="#" data-section="profil" class="nav-link text-gray-400 hover:text-emerald-600 flex flex-col items-center text-xs gap-1">
+                        <i data-lucide="user" class="w-5 h-5"></i> Profil
+                    </a>
+                </div>
+            </nav>
+
+            <!-- Notification Drawer -->
+            <div id="notificationDrawer" class="fixed inset-0 z-50 hidden">
+                <div class="absolute inset-0 bg-black/30" onclick="closeNotifications()"></div>
+                <div class="absolute right-0 top-0 bottom-0 w-80 bg-white shadow-xl p-5 overflow-y-auto">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="font-semibold">Notifications</h3>
+                        <button onclick="closeNotifications()" class="text-gray-500"><i data-lucide="x" class="w-5 h-5"></i></button>
+                    </div>
+                    <div id="notificationList" class="space-y-3"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <!-- Main Script -->
+    <script>
+        lucide.createIcons();
+
+        // Variables
+        let token = localStorage.getItem('token') || '';
+        let currentLang = localStorage.getItem('lang') || 'fr';
+        let map;
+        let userData = {};
+        let allReports = [];
+
+        // Traductions
+        const translations = {
+            fr: { accueil: "Accueil", signaler: "Signaler", mes_signalements: "Mes signalements", chatbot: "Chatbot", profil: "Profil" },
+            en: { accueil: "Home", signaler: "Report", mes_signalements: "My Reports", chatbot: "Chatbot", profil: "Profile" }
+        };
+        function t(key) { return translations[currentLang][key] || translations['fr'][key] || key; }
+
+        // Helpers
+        function showLoader() { document.getElementById('loaderOverlay').classList.remove('hidden'); document.getElementById('loaderOverlay').classList.add('flex'); }
+        function hideLoader() { document.getElementById('loaderOverlay').classList.add('hidden'); document.getElementById('loaderOverlay').classList.remove('flex'); }
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.innerHTML = `<i data-lucide="${type === 'error' ? 'alert-circle' : type === 'warning' ? 'alert-triangle' : 'info'}" class="w-5 h-5"></i><span>${message}</span>`;
+            container.appendChild(toast);
+            lucide.createIcons();
+            setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300); }, 5000);
+        }
+
+        // Navigation
+        const sections = document.querySelectorAll('.section-content');
+        const navLinks = document.querySelectorAll('.nav-link');
+        function showSection(sectionId) {
+            sections.forEach(sec => sec.classList.add('hidden'));
+            const target = document.getElementById(sectionId);
+            if (target) target.classList.remove('hidden');
+            navLinks.forEach(link => {
+                link.classList.remove('active');
+                link.classList.remove('text-emerald-600');
+                if (link.dataset.section === sectionId) {
+                    link.classList.add('active');
+                    link.classList.add('text-emerald-600');
+                }
+            });
+            if (sectionId === 'mes-signalements') chargerMesSignalements();
+            if (sectionId === 'profil') chargerProfil();
+            if (sectionId === 'points') initMap();
+        }
+        navLinks.forEach(link => {
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                showSection(link.dataset.section);
+            });
+        });
+
+        // --- INSCRIPTION / CONNEXION ---
+        function showRegister() {
+            document.getElementById('loginCard').classList.add('hidden');
+            document.getElementById('registerCard').classList.remove('hidden');
+        }
+        function showLogin() {
+            document.getElementById('registerCard').classList.add('hidden');
+            document.getElementById('loginCard').classList.remove('hidden');
+        }
+
+        async function login() {
+            showLoader();
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            try {
+                const resp = await fetch('/api/v1/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) });
+                const data = await resp.json();
+                if (data.access_token) {
+                    token = data.access_token;
+                    localStorage.setItem('token', token);
+                    document.getElementById('loginStatus').textContent = '✅ Connecté';
+                    document.getElementById('loginCard').classList.add('hidden');
+                    document.getElementById('registerCard').classList.add('hidden');
+                    document.getElementById('postLogin').style.display = 'flex';
+                    const payload = parseJwt(token);
+                    if (payload) {
+                        userData = payload;
+                        document.getElementById('userName').textContent = payload.name || payload.email || 'Citoyen';
+                        document.getElementById('profileName').textContent = payload.name || 'Citoyen';
+                        document.getElementById('profileEmail').textContent = payload.email || '';
+                        document.getElementById('userAvatar').textContent = (payload.name || 'U').charAt(0).toUpperCase();
+                        document.getElementById('profileAvatar').textContent = (payload.name || 'U').charAt(0).toUpperCase();
+                    }
+                    chargerPoints();
+                    connectWebSocket();
+                    showSection('accueil');
+                } else {
+                    document.getElementById('loginStatus').textContent = '❌ ' + (data.detail || 'Erreur');
+                }
+            } catch (e) {
+                console.error(e);
+                document.getElementById('loginStatus').textContent = '❌ ' + e.message;
+            } finally { hideLoader(); }
+        }
+
+        async function registerCitoyen() {
+            const nom = document.getElementById('regNom').value.trim();
+            const email = document.getElementById('regEmail').value.trim();
+            const password = document.getElementById('regPassword').value;
+            const arrondissement = document.getElementById('regArrondissement').value.trim();
+            if (!email || !password) {
+                document.getElementById('registerStatus').textContent = '❌ Email et mot de passe requis';
+                return;
+            }
+            showLoader();
+            try {
+                const resp = await fetch('/api/v1/auth/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password, nom, arrondissement })
+                });
+                const data = await resp.json();
+                if (resp.ok) {
+                    token = data.access_token;
+                    localStorage.setItem('token', token);
+                    document.getElementById('registerStatus').textContent = '✅ Compte créé et connecté !';
+                    document.getElementById('loginCard').classList.add('hidden');
+                    document.getElementById('registerCard').classList.add('hidden');
+                    document.getElementById('postLogin').style.display = 'flex';
+                    const payload = parseJwt(token);
+                    if (payload) {
+                        userData = payload;
+                        document.getElementById('userName').textContent = payload.nom || payload.email || 'Citoyen';
+                        document.getElementById('profileName').textContent = payload.nom || 'Citoyen';
+                        document.getElementById('profileEmail').textContent = payload.email || '';
+                        document.getElementById('userAvatar').textContent = (payload.nom || 'U').charAt(0).toUpperCase();
+                        document.getElementById('profileAvatar').textContent = (payload.nom || 'U').charAt(0).toUpperCase();
+                    }
+                    chargerPoints();
+                    connectWebSocket();
+                    showSection('accueil');
+                } else {
+                    document.getElementById('registerStatus').textContent = '❌ ' + (data.detail || 'Erreur création compte');
+                }
+            } catch (e) {
+                document.getElementById('registerStatus').textContent = '❌ ' + e.message;
+            } finally { hideLoader(); }
+        }
+
+        function logout() {
+            token = ''; localStorage.removeItem('token');
+            document.getElementById('loginCard').classList.remove('hidden');
+            document.getElementById('registerCard').classList.add('hidden');
+            document.getElementById('postLogin').style.display = 'none';
+            document.getElementById('loginStatus').textContent = '';
+        }
+
+        function parseJwt(token) {
+            try {
+                const base64Url = token.split('.')[1];
+                const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+                const jsonPayload = decodeURIComponent(atob(base64).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''));
+                return JSON.parse(jsonPayload);
+            } catch (e) { return null; }
+        }
+
+        // --- VÉRIFICATION DU TOKEN ---
+        async function checkTokenValidity() {
+            if (!token) return false;
+            try {
+                const resp = await fetch('/api/v1/mes-signalements', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (resp.status === 401) {
+                    localStorage.removeItem('token');
+                    token = '';
+                    document.getElementById('loginCard').classList.remove('hidden');
+                    document.getElementById('registerCard').classList.add('hidden');
+                    document.getElementById('postLogin').style.display = 'none';
+                    document.getElementById('loginStatus').textContent = '❌ Session expirée, reconnectez-vous.';
+                    return false;
+                }
+                return true;
+            } catch (e) {
+                return false;
+            }
+        }
+
+        // --- WEBSOCKET NOTIFICATIONS ---
+        function connectWebSocket() {
+            const ws = new WebSocket(`ws://${window.location.host}/ws`);
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'nouveau_signalement') {
+                        addNotification(`Nouveau signalement #${data.id} créé`, 'info');
+                    } else if (data.type === 'traitement_termine') {
+                        addNotification(`Votre signalement #${data.report_id} a été traité !`, 'success');
+                        chargerMesSignalements();
+                    }
+                } catch (e) {}
+            };
+            ws.onclose = () => setTimeout(connectWebSocket, 5000);
+        }
+
+        function addNotification(message, type = 'info') {
+            const list = document.getElementById('notificationList');
+            const item = document.createElement('div');
+            item.className = 'bg-gray-50 p-3 rounded-lg text-sm';
+            item.innerHTML = `<span class="block">${message}</span><span class="text-xs text-gray-500">${new Date().toLocaleTimeString()}</span>`;
+            list.prepend(item);
+            document.getElementById('notifCount').style.display = 'block';
+        }
+
+        function openNotifications() { document.getElementById('notificationDrawer').classList.remove('hidden'); }
+        function closeNotifications() { document.getElementById('notificationDrawer').classList.add('hidden'); }
+
+        // --- GÉOCODAGE INVERSÉ (QUARTIER) ---
+        const geocodeCache = {};
+        async function reverseGeocode(lat, lon) {
+            const key = `${lat.toFixed(5)},${lon.toFixed(5)}`;
+            if (geocodeCache[key]) return geocodeCache[key];
+            try {
+                const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`;
+                const resp = await fetch(url, { headers: { 'Accept-Language': 'fr' } });
+                const data = await resp.json();
+                let quartier = data.address?.suburb || data.address?.neighbourhood || 
+                               data.address?.city_district || data.address?.town || 
+                               data.address?.village || data.address?.city || 'Inconnu';
+                geocodeCache[key] = quartier;
+                return quartier;
+            } catch (e) { return 'Erreur'; }
+        }
+
+        // --- POINTS (simulés) ---
+        async function chargerPoints() {
+            const points = Math.floor(Math.random() * 500) + 100;
+            document.getElementById('pointsCount').textContent = points;
+            document.getElementById('profilePoints').textContent = points;
+        }
+
+        // --- PHOTO PREVIEW ---
+        const photoInput = document.getElementById('photoInput');
+        photoInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    document.getElementById('photoPreview').classList.remove('hidden');
+                    document.getElementById('previewImg').src = event.target.result;
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        // --- ENVOYER SIGNALEMENT ---
+        async function envoyerSignalement() {
+            if (!token || !(await checkTokenValidity())) {
+                document.getElementById('signalStatus').textContent = '❌ Session expirée, reconnectez-vous.';
+                return;
+            }
+            const file = photoInput.files[0];
+            if (!file) { document.getElementById('signalStatus').textContent = 'Veuillez choisir une photo'; return; }
+            if (!navigator.geolocation) { alert('Géolocalisation non supportée'); return; }
+            navigator.geolocation.getCurrentPosition(async (position) => {
+                const lat = position.coords.latitude;
+                const lon = position.coords.longitude;
+                const formData = new FormData();
+                formData.append('file', file);
+                formData.append('lat', lat);
+                formData.append('lon', lon);
+                showLoader();
+                try {
+                    const resp = await fetch('/api/v1/signalements', {
+                        method: 'POST',
+                        headers: { 'Authorization': 'Bearer ' + token },
+                        body: formData
+                    });
+                    const data = await resp.json();
+                    if (resp.ok) {
+                        document.getElementById('signalStatus').textContent = '✅ Signalement envoyé avec succès';
+                        photoInput.value = '';
+                        document.getElementById('photoPreview').classList.add('hidden');
+                        document.getElementById('description').value = '';
+                        addNotification('Signalement créé avec succès', 'success');
+                        chargerMesSignalements();
+                        chargerProfil();
+                        showSection('mes-signalements');
+                    } else {
+                        document.getElementById('signalStatus').textContent = '❌ Erreur : ' + (data.detail || 'Inconnue');
+                    }
+                } catch (e) {
+                    document.getElementById('signalStatus').textContent = '❌ ' + e.message;
+                } finally { hideLoader(); }
+            }, (err) => alert('Impossible d\'obtenir la position GPS'));
+        }
+
+        // --- MES SIGNALEMENTS ---
+        async function chargerMesSignalements() {
+            showLoader();
+            try {
+                const resp = await fetch('/api/v1/mes-signalements', { headers: { 'Authorization': 'Bearer ' + token } });
+                const signalements = await resp.json();
+                allReports = signalements || [];
+                renderFilterTabs();
+                renderSignalements();
+            } catch (e) { console.error(e); }
+            finally { hideLoader(); }
+        }
+
+        function renderFilterTabs() {
+            const container = document.getElementById('filterTabs');
+            container.innerHTML = '';
+            const statuses = ['tous', 'soumis', 'valide', 'en_cours', 'traite'];
+            statuses.forEach(status => {
+                const btn = document.createElement('button');
+                btn.dataset.status = status;
+                btn.textContent = status === 'tous' ? 'Tous' : status.replace('_', ' ');
+                btn.className = 'shrink-0 rounded-full px-3 py-1.5 text-sm font-medium transition-colors ' + (status === 'tous' ? 'bg-emerald-600 text-white' : 'bg-gray-100 text-gray-600');
+                btn.onclick = () => {
+                    document.querySelectorAll('#filterTabs button').forEach(b => {
+                        b.classList.remove('bg-emerald-600', 'text-white');
+                        b.classList.add('bg-gray-100', 'text-gray-600');
+                    });
+                    btn.classList.add('bg-emerald-600', 'text-white');
+                    btn.classList.remove('bg-gray-100', 'text-gray-600');
+                    renderSignalements(status);
+                };
+                container.appendChild(btn);
+            });
+        }
+
+        function renderSignalements(statusFilter = 'tous') {
+            const container = document.getElementById('mesSignalementsList');
+            container.innerHTML = '';
+            const query = document.getElementById('searchInput').value.toLowerCase().trim();
+            let filtered = allReports;
+            if (statusFilter !== 'tous') filtered = filtered.filter(r => r.status === statusFilter);
+            if (query) filtered = filtered.filter(r => (r.waste_type || '').toLowerCase().includes(query) || (r.arrondissement || '').toLowerCase().includes(query));
+            if (filtered.length === 0) {
+                container.innerHTML = '<p class="text-gray-500 text-center py-10">Aucun signalement trouvé.</p>';
+                return;
+            }
+            filtered.forEach(s => {
+                const item = document.createElement('div');
+                item.className = 'bg-white rounded-xl p-4 shadow-sm border border-gray-100';
+                const statutColor = s.status === 'soumis' ? 'bg-blue-100 text-blue-700' : s.status === 'valide' ? 'bg-green-100 text-green-700' : s.status === 'en_cours' ? 'bg-orange-100 text-orange-700' : s.status === 'traite' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-700';
+                const imgHtml = s.photo_base64 ? `<img src="data:image/jpeg;base64,${s.photo_base64}" class="w-full h-40 object-cover rounded-lg mb-3" onclick="window.open(this.src,'_blank')">` : '';
+                // Quartier (arrondissement) - si absent, on le remplit via reverseGeocode
+                let quartier = s.arrondissement || 'Détection...';
+                if (!s.arrondissement && s.lat && s.lon) {
+                    reverseGeocode(s.lat, s.lon).then(q => {
+                        s.arrondissement = q;
+                        // Mettre à jour le texte dans la carte
+                        const quartierSpan = item.querySelector('.quartier-text');
+                        if (quartierSpan) quartierSpan.textContent = q;
+                    });
+                }
+                item.innerHTML = `
+                    ${imgHtml}
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <p class="font-semibold">Signalement #${s.id}</p>
+                            <p class="text-xs text-gray-500">${new Date(s.created_at).toLocaleString()}</p>
+                        </div>
+                        <span class="text-xs px-2 py-1 rounded-full ${statutColor}">${s.status}</span>
+                    </div>
+                    <p class="text-sm mt-2">${s.waste_type || 'Type inconnu'}</p>
+                    <p class="text-xs mt-1 text-gray-500">📍 <span class="quartier-text">${quartier}</span></p>
+                    ${s.agent_lat ? `<p class="text-xs text-gray-500 mt-1">🚚 Agent en position</p>` : ''}
+                    <button onclick="voirDetailSignalement(${s.id})" class="mt-3 w-full bg-gray-100 py-2 rounded-lg text-xs font-medium">Voir détails</button>
+                `;
+                container.appendChild(item);
+            });
+        }
+
+        function filterReports() {
+            const activeStatus = document.querySelector('#filterTabs button.bg-emerald-600')?.dataset.status || 'tous';
+            renderSignalements(activeStatus);
+        }
+
+        // --- DÉTAIL SIGNALEMENT AVEC PHOTO ET QUARTIER ---
+        async function voirDetailSignalement(id) {
+            showLoader();
+            try {
+                const resp = await fetch(`/api/v1/signalements/${id}/suivi`, { headers: { 'Authorization': 'Bearer ' + token } });
+                const data = await resp.json();
+                const modal = document.createElement('div');
+                modal.id = 'detailModal';
+                modal.className = 'fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4';
+                // Récupérer la photo du signalement (déjà dans allReports ou via data)
+                let photoBase64 = '';
+                const report = allReports.find(r => r.id === id);
+                if (report && report.photo_base64) photoBase64 = report.photo_base64;
+                // Quartier
+                let quartier = data.arrondissement || 'Détection...';
+                if (!quartier && data.lat && data.lon) {
+                    quartier = await reverseGeocode(data.lat, data.lon);
+                }
+                modal.innerHTML = `
+                    <div class="bg-white rounded-xl p-5 shadow-xl max-w-sm w-full">
+                        <h3 class="font-bold">Signalement #${id}</h3>
+                        ${photoBase64 ? `<img src="data:image/jpeg;base64,${photoBase64}" class="w-full h-48 object-cover rounded-lg mt-3" onclick="window.open(this.src,'_blank')" />` : ''}
+                        <p class="text-sm mt-3">Statut : ${data.status}</p>
+                        <p class="text-sm">Type : ${data.waste_type || 'Inconnu'}</p>
+                        <p class="text-sm">Quartier : ${quartier}</p>
+                        ${data.agent_email ? `<p class="text-sm">Agent assigné : ${data.agent_email}</p>` : ''}
+                        <div id="mapDetail" class="mt-4"></div>
+                        <button onclick="closeDetailModal()" class="mt-4 w-full bg-gray-100 py-2 rounded-lg">Fermer</button>
+                    </div>
+                `;
+                document.body.appendChild(modal);
+                if (data.agent_lat && data.agent_lon) {
+                    const mapDetail = L.map('mapDetail').setView([data.agent_lat, data.agent_lon], 14);
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(mapDetail);
+                    L.marker([data.agent_lat, data.agent_lon]).addTo(mapDetail).bindPopup('Agent en position').openPopup();
+                    if (data.lat && data.lon) {
+                        L.marker([data.lat, data.lon]).addTo(mapDetail).bindPopup('Votre signalement').openPopup();
+                        const bounds = L.latLngBounds([[data.agent_lat, data.agent_lon], [data.lat, data.lon]]);
+                        mapDetail.fitBounds(bounds, { padding: [30, 30] });
+                    }
+                } else {
+                    document.getElementById('mapDetail').innerHTML = '<p class="text-sm text-gray-500">Position de l\'agent non disponible.</p>';
+                }
+            } catch (e) { console.error(e); }
+            finally { hideLoader(); }
+        }
+
+        function closeDetailModal() {
+            const modal = document.getElementById('detailModal');
+            if (modal) modal.remove();
+        }
+
+        // --- CHATBOT (conversion base64 -> Blob) ---
+        let chatImage = null;
+        function previewChatImage() {
+            const file = document.getElementById('chatImageInput').files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                chatImage = e.target.result;
+                document.getElementById('chatPreviewContainer').classList.remove('hidden');
+                document.getElementById('chatPreviewImg').src = chatImage;
+            };
+            reader.readAsDataURL(file);
+        }
+        function clearChatImage() {
+            chatImage = null;
+            document.getElementById('chatPreviewContainer').classList.add('hidden');
+            document.getElementById('chatImageInput').value = '';
+        }
+        function handleChatKey(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                envoyerMessageChat();
+            }
+        }
+
+        async function envoyerMessageChat() {
+            const input = document.getElementById('chatInput');
+            const message = input.value.trim();
+            if (!message && !chatImage) return;
+
+            const chat = document.getElementById('chatMessages');
+            const userMsg = document.createElement('div');
+            userMsg.className = 'message-bubble message-user';
+            if (chatImage) {
+                userMsg.innerHTML = `<img src="${chatImage}" class="message-image" alt="Image envoyée" />`;
+                if (message) userMsg.innerHTML += `<p>${message}</p>`;
+            } else {
+                userMsg.textContent = message;
+            }
+            chat.appendChild(userMsg);
+            chat.scrollTop = chat.scrollHeight;
+            input.value = '';
+            const imgToSend = chatImage;
+            clearChatImage();
+
+            const typing = document.createElement('div');
+            typing.className = 'message-bubble message-bot';
+            typing.innerHTML = '<span class="inline-block w-2 h-2 bg-gray-400 rounded-full animate-pulse mr-1"></span><span class="inline-block w-2 h-2 bg-gray-400 rounded-full animate-pulse mr-1"></span><span class="inline-block w-2 h-2 bg-gray-400 rounded-full animate-pulse"></span>';
+            chat.appendChild(typing);
+            chat.scrollTop = chat.scrollHeight;
+
+            try {
+                let url = '/api/v1/chatbot/ask?question=' + encodeURIComponent(message);
+                if (imgToSend) {
+                    const formData = new FormData();
+                    const base64Data = imgToSend.split(',')[1];
+                    const blob = await (await fetch(`data:image/jpeg;base64,${base64Data}`)).blob();
+                    formData.append('file', blob, 'photo.jpg');
+                    formData.append('question', message);
+                    const resp = await fetch('/api/v1/chatbot/ask', {
+                        method: 'POST',
+                        headers: { 'Authorization': 'Bearer ' + token },
+                        body: formData
+                    });
+                    const data = await resp.json();
+                    typing.remove();
+                    const botMsg = document.createElement('div');
+                    botMsg.className = 'message-bubble message-bot';
+                    botMsg.textContent = data.reponse || data.reponse_globale || "Désolé, je n'ai pas compris.";
+                    chat.appendChild(botMsg);
+                } else {
+                    if (navigator.geolocation) {
+                        try {
+                            const pos = await new Promise((resolve, reject) => {
+                                navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 3000 });
+                            });
+                            url += `&lat=${pos.coords.latitude}&lon=${pos.coords.longitude}`;
+                        } catch (e) {}
+                    }
+                    const resp = await fetch(url);
+                    const data = await resp.json();
+                    typing.remove();
+                    const botMsg = document.createElement('div');
+                    botMsg.className = 'message-bubble message-bot';
+                    botMsg.textContent = data.reponse || data.reponse_globale || "Désolé, je n'ai pas compris.";
+                    chat.appendChild(botMsg);
+                }
+                chat.scrollTop = chat.scrollHeight;
+            } catch (e) {
+                typing.remove();
+                showToast('Erreur chatbot', 'error');
+            }
+        }
+
+        // --- PROFIL ---
+        async function chargerProfil() {
+            try {
+                const resp = await fetch('/api/v1/mes-signalements', { headers: { 'Authorization': 'Bearer ' + token } });
+                const list = await resp.json();
+                document.getElementById('profileReports').textContent = list.length;
+            } catch (e) {}
+        }
+
+        // --- ABONNEMENT ---
+        async function creerAbonnement() {
+            if (!navigator.geolocation) { alert('Géolocalisation non supportée'); return; }
+            navigator.geolocation.getCurrentPosition(async (pos) => {
+                const lat = pos.coords.latitude;
+                const lon = pos.coords.longitude;
+                const frequence = document.getElementById('frequenceSelect').value;
+                const notes = document.getElementById('aboNotes').value;
+                const resp = await fetch('/api/v1/abonnements', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+                    body: JSON.stringify({ lat, lon, frequence, notes })
+                });
+                const result = await resp.json();
+                alert(result.message || 'Abonnement créé !');
+            }, (err) => alert('Erreur géolocalisation : ' + err.message));
+        }
+
+        // --- POINTS DE COLLECTE ---
+        function initMap() {
+            if (map) return;
+            map = L.map('map').setView([4.05, 9.70], 12);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(map);
+            chargerPointsCollecte();
+        }
+
+        async function chargerPointsCollecte() {
+            if (!map) return;
+            try {
+                const response = await fetch('/api/v1/points-collecte');
+                const points = await response.json();
+                map.eachLayer(layer => {
+                    if (layer instanceof L.Marker) map.removeLayer(layer);
+                });
+                points.forEach(p => {
+                    L.marker([p.lat, p.lon])
+                        .bindPopup(`<strong>${p.nom}</strong><br>${p.type_activite || 'Point de collecte'}`)
+                        .addTo(map);
+                });
+            } catch (e) { console.log('Impossible de charger les points', e); }
+        }
+
+        async function trouverPointProche() {
+            if (!navigator.geolocation) { alert('Géolocalisation non supportée'); return; }
+            navigator.geolocation.getCurrentPosition(async (pos) => {
+                const lat = pos.coords.latitude;
+                const lon = pos.coords.longitude;
+                if (!map) initMap();
+                map.setView([lat, lon], 13);
+                const response = await fetch(`/api/v1/chatbot/point-proche?lat=${lat}&lon=${lon}`);
+                const data = await response.json();
+                if (data.points_proches && data.points_proches.length > 0) {
+                    data.points_proches.slice(0, 5).forEach(p => {
+                        L.marker([p.lat, p.lon])
+                            .bindPopup(`<strong>${p.nom}</strong><br>${p.arrondissement}<br>${p.distance_km} km`)
+                            .addTo(map);
+                    });
+                } else {
+                    alert('Aucun point de collecte trouvé dans un rayon de 20 km.');
+                }
+            }, (err) => alert('Erreur géolocalisation : ' + err.message));
+        }
+
+        // --- LANGUE ---
+        function setLanguage(lang) {
+            currentLang = lang;
+            localStorage.setItem('lang', lang);
+        }
+
+        // --- INITIALISATION ---
+        const savedToken = localStorage.getItem('token');
+        if (savedToken) {
+            token = savedToken;
+            // Vérifie si le token est valide avant d'ouvrir l'interface
+            checkTokenValidity().then(valid => {
+                if (valid) {
+                    document.getElementById('loginCard').classList.add('hidden');
+                    document.getElementById('registerCard').classList.add('hidden');
+                    document.getElementById('postLogin').style.display = 'flex';
+                    const payload = parseJwt(token);
+                    if (payload) {
+                        userData = payload;
+                        document.getElementById('userName').textContent = payload.name || payload.email || 'Citoyen';
+                        document.getElementById('profileName').textContent = payload.name || 'Citoyen';
+                        document.getElementById('profileEmail').textContent = payload.email || '';
+                        document.getElementById('userAvatar').textContent = (payload.name || 'U').charAt(0).toUpperCase();
+                        document.getElementById('profileAvatar').textContent = (payload.name || 'U').charAt(0).toUpperCase();
+                    }
+                    chargerPoints();
+                    connectWebSocket();
+                    showSection('accueil');
+                }
+            });
+        }
+
+        // Auto refresh
+        setInterval(() => {
+            if (token) {
+                chargerMesSignalements();
+                chargerPointsCollecte();
+            }
+        }, 30000);
+    </script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+.env
+.env.*
+!.env.example
+
+# Local Python environments and generated files
+env/
+venv/
+ragas_env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local caches and downloaded/generated data
+cache/
+images_copernicus/
+models/multilingual-e5-small/model.safetensors
+
+# Model weights are kept locally and downloaded separately
+*.h5
+*.onnx
+models/*/model.safetensors

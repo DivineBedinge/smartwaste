@@ -1,0 +1,22 @@
+[
+  {"question": "Que faire avec une pile usagée ?", "reference": "Déposer dans un point de collecte DEEE."},
+  {"question": "Où puis-je vendre des bouteilles plastiques à Douala ?", "reference": "NAMé Recycling, EcoCollect, récupérateurs."},
+  {"question": "Comment composter les déchets organiques ?", "reference": "Compostage domestique en bidon percé."},
+  {"question": "Que faire avec un vieux réfrigérateur ?", "reference": "Dépôt DEEE, récupérateurs spécialisés."},
+  {"question": "Combien coûte le plastique au kilo ?", "reference": "Prix officiel EcoCollect (75 FCFA/kg)."},
+  {"question": "Où jeter les canettes en aluminium ?", "reference": "Ferrailleurs de quartier, NAMé Recycling."},
+  {"question": "Comment recycler le papier ?", "reference": "Revente aux récupérateurs de papier/carton."},
+  {"question": "Que faire des restes de nourriture ?", "reference": "Compostage ou dépôt en composteur communautaire."},
+  {"question": "Où trouver un point de collecte pour le carton ?", "reference": "Marché Central, Marché Sandaga, NAMé."},
+  {"question": "Que faire avec un téléphone cassé ?", "reference": "Dépôt DEEE, récupérateurs spécialisés."},
+  {"question": "Comment valoriser les sachets plastiques ?", "reference": "Réutilisation, revente aux récupérateurs."},
+  {"question": "Où jeter les médicaments périmés ?", "reference": "Pharmacie agréée, campagnes de collecte."},
+  {"question": "Que faire avec une batterie de voiture ?", "reference": "Garage, ferrailleur, NAMé Recycling."},
+  {"question": "Comment se débarrasser d'un vieux matelas ?", "reference": "Mairie, déchetterie, récupérateurs d'encombrants."},
+  {"question": "Combien coûte le verre au kilo ?", "reference": "Prix officiel EcoCollect (50 FCFA/kg)."},
+  {"question": "Où jeter les ampoules fluorescentes ?", "reference": "Points DEEE, grandes surfaces."},
+  {"question": "Que faire avec une boîte de conserve ?", "reference": "Rincer, écraser, revendre au ferrailleur."},
+  {"question": "Comment réutiliser un bocal en verre ?", "reference": "Conservation d'aliments, rangement."},
+  {"question": "Où trouver un composteur communautaire à Douala ?", "reference": "Douala Clean City, associations de quartier."},
+  {"question": "Que faire avec des vêtements abîmés ?", "reference": "Chiffons de nettoyage, don à des ateliers."}
+]
