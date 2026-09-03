@@ -1,3 +1,231 @@
+-- SmartWaste CM+ reference schema bootstrap.
+-- This section makes a fresh PostGIS database usable before the historical seeds below.
+CREATE EXTENSION IF NOT EXISTS postgis;
+
+CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'citoyen',
+    arrondissement TEXT,
+    language_preference TEXT NOT NULL DEFAULT 'fr',
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    service_area VARCHAR(120),
+    daily_capacity INTEGER NOT NULL DEFAULT 8,
+    available_weekdays SMALLINT[] NOT NULL DEFAULT ARRAY[0,1,2,3,4,5,6],
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (language_preference IN ('fr', 'en')),
+    CHECK (daily_capacity > 0),
+    CHECK (role IN ('citoyen', 'agent', 'ramasseur', 'gestionnaire', 'municipal', 'admin'))
+);
+
+CREATE TABLE IF NOT EXISTS tours (
+    id SERIAL PRIMARY KEY,
+    agent_id INTEGER REFERENCES users(id),
+    planned_date DATE,
+    status TEXT NOT NULL DEFAULT 'planifiee',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS reports (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id),
+    agent_id INTEGER REFERENCES users(id),
+    tournee_id INTEGER REFERENCES tours(id),
+    geometry GEOMETRY(Point, 4326) NOT NULL,
+    severity TEXT NOT NULL DEFAULT 'en_analyse',
+    confidence REAL,
+    status TEXT NOT NULL DEFAULT 'soumis',
+    photo_base64 TEXT,
+    photo_preuve_base64 TEXT,
+    resultat_preuve TEXT,
+    confiance_preuve REAL,
+    date_traitement TIMESTAMPTZ,
+    waste_type TEXT,
+    commentaire_gestion TEXT,
+    report_count INTEGER NOT NULL DEFAULT 1,
+    duplicate_group_id INTEGER,
+    is_primary BOOLEAN NOT NULL DEFAULT TRUE,
+    client_id UUID,
+    address_text TEXT,
+    classification_source VARCHAR(32),
+    classification_model_version VARCHAR(100),
+    analyzed_at TIMESTAMPTZ,
+    human_review_required BOOLEAN NOT NULL DEFAULT FALSE,
+    initial_severity VARCHAR(32),
+    final_severity VARCHAR(32),
+    reviewed_by INTEGER REFERENCES users(id),
+    reviewed_at TIMESTAMPTZ,
+    review_reason TEXT,
+    rejection_reason TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_reports_user_client_id
+    ON reports(user_id, client_id) WHERE client_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status);
+CREATE INDEX IF NOT EXISTS idx_reports_agent_status ON reports(agent_id, status);
+CREATE INDEX IF NOT EXISTS idx_reports_geometry ON reports USING GIST(geometry);
+
+CREATE TABLE IF NOT EXISTS sorting_rules (
+    id SERIAL PRIMARY KEY,
+    keyword TEXT NOT NULL,
+    waste_type TEXT NOT NULL,
+    local_consigne TEXT,
+    notes TEXT,
+    aliases TEXT[] DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS zones (
+    id SERIAL PRIMARY KEY,
+    nom TEXT NOT NULL,
+    zone_type TEXT,
+    geometry GEOMETRY(Polygon, 4326)
+);
+
+CREATE TABLE IF NOT EXISTS chatbot_embeddings (
+    id SERIAL PRIMARY KEY,
+    type_dechet TEXT,
+    reponse TEXT,
+    conseil_pratique TEXT,
+    detail_technique TEXT,
+    impact_environnement TEXT,
+    methode_valorisation TEXT,
+    contact_douala TEXT
+);
+
+CREATE TABLE IF NOT EXISTS tournee_signalements (
+    tournee_id INTEGER NOT NULL REFERENCES tours(id),
+    report_id INTEGER NOT NULL REFERENCES reports(id),
+    PRIMARY KEY (tournee_id, report_id)
+);
+
+CREATE TABLE IF NOT EXISTS agent_positions (
+    agent_id INTEGER PRIMARY KEY REFERENCES users(id),
+    lat DOUBLE PRECISION NOT NULL,
+    lon DOUBLE PRECISION NOT NULL,
+    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS abonnements_collecte (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    adresse_geometry GEOMETRY(Point, 4326) NOT NULL,
+    frequence TEXT NOT NULL,
+    prochain_passage TIMESTAMPTZ,
+    actif BOOLEAN NOT NULL DEFAULT TRUE,
+    notes TEXT
+);
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id BIGSERIAL PRIMARY KEY,
+    actor_id INTEGER REFERENCES users(id),
+    actor_role VARCHAR(32) NOT NULL,
+    action VARCHAR(100) NOT NULL,
+    resource_type VARCHAR(100) NOT NULL,
+    resource_id INTEGER,
+    old_value JSONB,
+    new_value JSONB,
+    reason TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS subscription_plans (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(120) NOT NULL,
+    frequency VARCHAR(32) NOT NULL CHECK (frequency IN ('hebdomadaire', 'bimensuelle', 'mensuelle')),
+    price NUMERIC(12, 2) NOT NULL CHECK (price >= 0),
+    service_area VARCHAR(120),
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS service_slots (
+    id SERIAL PRIMARY KEY,
+    service_area VARCHAR(120) NOT NULL,
+    weekday SMALLINT NOT NULL CHECK (weekday BETWEEN 0 AND 6),
+    starts_at TIME NOT NULL,
+    ends_at TIME NOT NULL,
+    capacity INTEGER NOT NULL DEFAULT 1 CHECK (capacity > 0),
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    CHECK (ends_at > starts_at)
+);
+
+CREATE TABLE IF NOT EXISTS domestic_subscriptions (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    plan_id INTEGER REFERENCES subscription_plans(id),
+    address_geometry GEOMETRY(Point, 4326) NOT NULL,
+    address_text TEXT,
+    service_area VARCHAR(120),
+    preferred_slot_id INTEGER REFERENCES service_slots(id),
+    starts_on DATE NOT NULL DEFAULT CURRENT_DATE,
+    ends_on DATE,
+    status VARCHAR(32) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'suspended', 'cancelled')),
+    notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (ends_on IS NULL OR ends_on >= starts_on)
+);
+
+CREATE TABLE IF NOT EXISTS collection_occurrences (
+    id SERIAL PRIMARY KEY,
+    subscription_id INTEGER NOT NULL REFERENCES domestic_subscriptions(id),
+    collector_id INTEGER REFERENCES users(id),
+    scheduled_for TIMESTAMPTZ NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'programmee'
+        CHECK (status IN ('programmee', 'affectee', 'en_route', 'arrivee', 'effectuee', 'confirmee', 'manquee', 'reprogrammee')),
+    missed_reason VARCHAR(64),
+    rescheduled_to INTEGER REFERENCES collection_occurrences(id),
+    started_at TIMESTAMPTZ,
+    arrived_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (subscription_id, scheduled_for)
+);
+
+CREATE TABLE IF NOT EXISTS support_requests (
+    id SERIAL PRIMARY KEY,
+    author_id INTEGER NOT NULL REFERENCES users(id),
+    author_role VARCHAR(32) NOT NULL,
+    category VARCHAR(64) NOT NULL,
+    subject VARCHAR(200) NOT NULL,
+    description TEXT NOT NULL,
+    attachment_url TEXT,
+    priority VARCHAR(16) NOT NULL DEFAULT 'normal' CHECK (priority IN ('basse', 'normal', 'haute', 'critique')),
+    status VARCHAR(32) NOT NULL DEFAULT 'ouverte'
+        CHECK (status IN ('ouverte', 'en_examen', 'resolue', 'rejetee', 'fermee', 'contestee', 'remise_en_examen')),
+    assigned_to INTEGER REFERENCES users(id),
+    manager_response TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id BIGSERIAL PRIMARY KEY,
+    recipient_id INTEGER NOT NULL REFERENCES users(id),
+    notification_type VARCHAR(64) NOT NULL,
+    title VARCHAR(200) NOT NULL,
+    content TEXT NOT NULL,
+    translation_key VARCHAR(120),
+    translation_params JSONB NOT NULL DEFAULT '{}'::JSONB,
+    link VARCHAR(2048),
+    is_read BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_role_active ON users(role, active);
+CREATE INDEX IF NOT EXISTS idx_abonnements_user_active ON abonnements_collecte(user_id, actif);
+CREATE INDEX IF NOT EXISTS idx_reports_client_id ON reports(client_id);
+CREATE INDEX IF NOT EXISTS idx_occurrences_collector_date ON collection_occurrences(collector_id, scheduled_for);
+CREATE INDEX IF NOT EXISTS idx_occurrences_subscription_date ON collection_occurrences(subscription_id, scheduled_for);
+CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications(recipient_id, is_read, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_support_requests_author ON support_requests(author_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_resource ON audit_logs(resource_type, resource_id);
+
 INSERT INTO sorting_rules (keyword, waste_type, local_consigne, notes, aliases)
 VALUES
 ('pile', 'DEEE', 'Ne pas jeter à la poubelle ordinaire. Déposer dans un point de collecte DEEE ou signaler séparément.', 'Piles usagées, accumulateurs', ARRAY['piles', 'accus', 'batterie']),
@@ -27,10 +255,10 @@ SELECT id, severity, confidence, ST_AsText(geometry) AS point
 FROM reports
 ORDER BY id DESC;
 
-ALTER TABLE reports DROP CONSTRAINT reports_status_check;
+ALTER TABLE reports DROP CONSTRAINT IF EXISTS reports_status_check;
 
 ALTER TABLE reports ADD CONSTRAINT reports_status_check 
-CHECK (status IN ('soumis', 'valide', 'en_cours', 'traite', 'refuse', 'rejete_hors_sujet', 'en_attente_validation'));
+CHECK (status IN ('soumis', 'en_analyse', 'a_verifier', 'classifie', 'valide', 'rejete', 'hors_sujet', 'assigne', 'en_route', 'en_cours', 'traite', 'verification_requise', 'cloture', 'reouvert', 'refuse', 'rejete_hors_sujet', 'en_attente_validation'));
 
 ALTER TABLE reports ADD COLUMN IF NOT EXISTS photo_base64 TEXT;
 
@@ -87,7 +315,7 @@ ALTER TABLE reports ADD COLUMN IF NOT EXISTS date_traitement TIMESTAMPTZ;
 -- Mettre à jour la contrainte de statut
 ALTER TABLE reports DROP CONSTRAINT IF EXISTS reports_status_check;
 ALTER TABLE reports ADD CONSTRAINT reports_status_check 
-CHECK (status IN ('soumis', 'valide', 'en_cours', 'traite', 'refuse', 'rejete_hors_sujet', 'en_attente_validation', 'verification_requise'));
+CHECK (status IN ('soumis', 'en_analyse', 'a_verifier', 'classifie', 'valide', 'rejete', 'hors_sujet', 'assigne', 'en_route', 'en_cours', 'traite', 'verification_requise', 'cloture', 'reouvert', 'refuse', 'rejete_hors_sujet', 'en_attente_validation'));
 
 SELECT column_name, data_type 
 FROM information_schema.columns 
@@ -115,7 +343,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS arrondissement TEXT;
 -- Mettre à jour la contrainte de rôle pour inclure agent
 ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
 ALTER TABLE users ADD CONSTRAINT users_role_check 
-CHECK (role IN ('citoyen', 'agent', 'municipal', 'admin'));
+CHECK (role IN ('citoyen', 'agent', 'ramasseur', 'gestionnaire', 'municipal', 'admin'));
 
 -- Table des points d'embouteillage
 CREATE TABLE IF NOT EXISTS embouteillages (
@@ -635,4 +863,12 @@ INSERT INTO chatbot_knowledge (type_dechet, question, reponse, conseil_valorisat
  'Les piles ne vont jamais à la poubelle ordinaire. Elles contiennent des métaux toxiques.',
  'Gardez dans un bocal en verre et déposez dans un point DEEE.');
 
- CREATE EXTENSION IF NOT EXISTS vector;
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'vector') THEN
+        CREATE EXTENSION IF NOT EXISTS vector;
+    ELSE
+        RAISE NOTICE 'Extension vector indisponible: les fonctions pgvector restent désactivées';
+    END IF;
+END
+$$;
