@@ -75,6 +75,9 @@ CREATE TABLE IF NOT EXISTS collection_occurrences (
     CHECK (status IN ('programmee', 'affectee', 'en_route', 'arrivee', 'effectuee', 'confirmee', 'manquee', 'reprogrammee'))
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS uq_collection_occurrence_schedule
+    ON collection_occurrences(subscription_id, scheduled_for);
+
 CREATE TABLE IF NOT EXISTS support_requests (
     id SERIAL PRIMARY KEY,
     author_id INTEGER NOT NULL REFERENCES users(id),

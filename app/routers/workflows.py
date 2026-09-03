@@ -5,6 +5,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 from core.policy import COLLECTION_TRANSITIONS, can_transition, is_manager_role
+from app.services.collections import generate_database_occurrences
 from core.security import decode_token
 from database import get_db_connection
 
@@ -62,6 +63,11 @@ class SupportRequestCreate(BaseModel):
 class CollectionStatusUpdate(BaseModel):
     status: str
     missed_reason: Optional[str] = Field(default=None, max_length=64)
+
+
+class OccurrenceGenerationRequest(BaseModel):
+    start: str
+    until: str
 
 
 @router.post("/abonnements-domestiques")
@@ -165,6 +171,25 @@ def create_support_request(
     cur.close()
     conn.close()
     return {"id": result[0], "status": result[1], "created_at": result[2]}
+
+
+@router.post("/gestionnaire/collectes/generer")
+def generate_collections(
+    payload: OccurrenceGenerationRequest,
+    user: dict = Depends(require_manager),
+):
+    from datetime import date
+    try:
+        start = date.fromisoformat(payload.start)
+        until = date.fromisoformat(payload.until)
+    except ValueError as exc:
+        raise HTTPException(422, "Dates ISO invalides") from exc
+    if until < start:
+        raise HTTPException(422, "La date de fin doit être postérieure")
+    conn = get_db_connection()
+    created = generate_database_occurrences(conn, start, until)
+    conn.close()
+    return {"created": created, "start": start, "until": until}
 
 
 @router.get("/demandes-support/mes-demandes")
