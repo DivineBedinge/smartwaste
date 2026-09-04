@@ -51,6 +51,20 @@ def run_daily_automation(conn, run_date: date | None = None) -> dict:
         retention=int(os.getenv("NOTIFICATION_RETENTION_DAYS","365"));cur.execute("DELETE FROM notifications WHERE is_read=TRUE AND created_at<NOW()-(%s||' days')::interval",(retention,));result["notifications_deleted"]=cur.rowcount;conn.commit();cur.close()
         result["temporary_media_deleted"]=cleanup_temporary_media(conn)
         result["gps_positions_deleted"]=purge_old_positions(conn)
+        cur=conn.cursor();cur.execute("DELETE FROM operational_positions WHERE expires_at<NOW()");result["operational_positions_deleted"]=cur.rowcount
+        cur.execute("""INSERT INTO tours(collector_id,planned_date,status,tour_type,created_by)
+            SELECT DISTINCT o.collector_id,o.scheduled_for::date,'planifiee','collection',NULL::integer
+            FROM collection_occurrences o WHERE o.collector_id IS NOT NULL AND o.status='acceptee'
+              AND o.scheduled_for::date=%s AND NOT EXISTS(SELECT 1 FROM tours t WHERE t.collector_id=o.collector_id AND t.planned_date=%s AND t.tour_type='collection' AND t.status IN ('planifiee','en_cours'))
+            RETURNING id,collector_id""",(day,day));created_tours=cur.fetchall();result["tours_created"]=len(created_tours)
+        for tour_id,collector_id in created_tours:
+            cur.execute("""INSERT INTO tour_stops(tour_id,occurrence_id,stop_order,geometry)
+                SELECT %s,o.id,ROW_NUMBER() OVER(ORDER BY o.scheduled_for,o.id),s.address_geometry FROM collection_occurrences o JOIN domestic_subscriptions s ON s.id=o.subscription_id
+                WHERE o.collector_id=%s AND o.status='acceptee' AND o.scheduled_for::date=%s""",(tour_id,collector_id,day))
+            create_notification(conn,collector_id,"tour_created","Nouvelle tournée",f"La tournée #{tour_id} a été préparée.",f"/ramasseur#tour-{tour_id}","notification.tour_created",{"tour_id":tour_id},resource_type="tour",resource_id=tour_id,idempotency_key=uuid5(NAMESPACE_URL,f"smartwaste:tour-created:{tour_id}"))
+        cur.execute("SELECT COUNT(*) FROM tours WHERE status='en_cours' AND planned_date<%s",(day,));result["late_tours"]=cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM route_versions WHERE status IN ('failed','unavailable') AND created_at>NOW()-INTERVAL '1 day'");result["routes_eligible_for_retry"]=cur.fetchone()[0]
+        conn.commit();cur.close()
         cur=conn.cursor();cur.execute("UPDATE job_runs SET status='completed',result=%s,finished_at=NOW() WHERE id=%s",(Json(result),run_id));conn.commit()
         cur.execute("SELECT pg_advisory_unlock(hashtext('smartwaste_daily_automation'))");cur.close();return {"status":"completed",**result}
     except Exception as error:

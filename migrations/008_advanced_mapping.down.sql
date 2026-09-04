@@ -1,0 +1,1 @@
+-- Réversion volontairement non destructive : les tournées et positions opérationnelles sont conservées.

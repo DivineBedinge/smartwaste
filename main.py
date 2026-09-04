@@ -45,6 +45,7 @@ from route_optimizer import get_graph, calculer_matrice_distances, resoudre_vrp
 from app.routers.workflows import router as workflows_router
 from app.routers.communications import router as communications_router
 from app.routers.media import router as media_router
+from app.routers.mapping import router as mapping_router
 from app.services.uploads import read_validated_image
 from app.services.routing import get_route
 from app.services.notifications import (
@@ -150,6 +151,7 @@ app.include_router(auth_router)
 app.include_router(workflows_router)
 app.include_router(communications_router)
 app.include_router(media_router)
+app.include_router(mapping_router)
 
 # Sécurité
 security = HTTPBearer()

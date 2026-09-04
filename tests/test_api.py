@@ -10,8 +10,9 @@ from fastapi.testclient import TestClient
 
 import auth
 import main
-from app.routers import communications, media, workflows
+from app.routers import communications, mapping, media, workflows
 from app.services.automation import run_daily_automation
+from app.services.routing import RouteResult
 from core.security import create_access_token, hash_password
 from database import require_test_database_url
 
@@ -38,6 +39,7 @@ def api(monkeypatch, tmp_path):
     monkeypatch.setattr(auth, "get_db_connection", lambda: wrapped)
     monkeypatch.setattr(communications, "get_db_connection", lambda: wrapped)
     monkeypatch.setattr(media, "get_db_connection", lambda: wrapped)
+    monkeypatch.setattr(mapping, "get_db_connection", lambda: wrapped)
     monkeypatch.setattr(workflows, "get_db_connection", lambda: wrapped)
     monkeypatch.setattr(main, "predict_severity", lambda _: ("faible", 0.99))
     monkeypatch.setattr(main, "predict_type", lambda _: ("plastic", 0.98))
@@ -215,3 +217,30 @@ def test_daily_automation_is_idempotent(api):
     duplicate = run_daily_automation(main.get_db_connection(), date.today())
     assert result["status"] == "completed"
     assert duplicate["status"] == "already_completed"
+
+
+def test_role_scoped_map_and_operational_tour(api, monkeypatch):
+    client,users=api
+    image=base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
+    report=client.post("/api/v1/signalements",files={"file":("map.png",image,"image/png")},data={"lat":"4.05","lon":"9.70","client_id":str(uuid4())},headers=bearer(users["citoyen"]));assert report.status_code==200
+    mapped=client.get("/api/v1/geo/map-data?south=4&west=9.6&north=4.2&east=9.9",headers=bearer(users["citoyen"]));assert mapped.status_code==200 and {r["id"] for r in mapped.json()["resources"] if r["kind"]=="report"}=={report.json()["id"]}
+    assert client.get("/api/v1/geo/map-data?south=4.2&west=9.6&north=4&east=9.9",headers=bearer(users["citoyen"])).status_code==422
+    plan=client.post("/api/v1/gestionnaire/plans",json={"name":"Carte","frequency":"hebdomadaire","price":1000},headers=bearer(users["admin"])).json()
+    subscription=client.post("/api/v1/abonnements-domestiques",json={"plan_id":plan[0],"lat":4.05,"lon":9.70},headers=bearer(users["citoyen"])).json();start=date.today()
+    client.post("/api/v1/gestionnaire/collectes/generer",json={"start":start.isoformat(),"until":(start+timedelta(days=14)).isoformat()},headers=bearer(users["admin"]))
+    occurrence_ids=[r[0] for r in client.get("/api/v1/gestionnaire/collectes",headers=bearer(users["admin"])).json() if r[1]==subscription["id"]][:2]
+    for occurrence_id in occurrence_ids:
+        assert client.post(f"/api/v1/gestionnaire/collectes/{occurrence_id}/affecter",json={"collector_id":users["ramasseur"]["id"]},headers=bearer(users["admin"])).status_code==200
+        assert client.patch(f"/api/v1/ramasseur/collectes/{occurrence_id}/proposition",json={"accept":True},headers=bearer(users["ramasseur"])).status_code==200
+    tour=client.post("/api/v1/geo/tours",json={"collector_id":users["ramasseur"]["id"],"occurrence_ids":occurrence_ids,"planned_date":start.isoformat()},headers=bearer(users["admin"]));assert tour.status_code==200;tour_id=tour.json()["id"]
+    assert client.get(f"/api/v1/geo/tours/{tour_id}",headers=bearer(users["citoyen"])).status_code==404
+    assert client.get(f"/api/v1/geo/tours/{tour_id}",headers=bearer(users["ramasseur"])).status_code==200
+    class FakeProvider:
+        name="fake"
+        def route(self,coordinates):return RouteResult({"type":"LineString","coordinates":[[p[1],p[0]] for p in coordinates]},1200,300,self.name)
+    monkeypatch.setattr(mapping,"get_routing_provider",lambda:FakeProvider())
+    route=client.post(f"/api/v1/geo/tours/{tour_id}/route",headers=bearer(users["ramasseur"]));assert route.status_code==200 and route.json()["status"]=="ready"
+    assert client.post(f"/api/v1/geo/tours/{tour_id}/start",headers=bearer(users["ramasseur"])).status_code==200
+    position={"lat":4.05,"lon":9.70,"accuracy_m":10}
+    assert client.post(f"/api/v1/geo/tours/{tour_id}/position",json=position,headers=bearer(users["ramasseur"])).status_code==202
+    assert client.post(f"/api/v1/geo/tours/{tour_id}/position",json=position,headers=bearer(users["ramasseur"])).status_code==429

@@ -1,10 +1,11 @@
 const OFFLINE_DB_NAME = 'smartwaste-offline';
 const OFFLINE_STORE = 'reports';
+const GEO_STORE = 'geo-cache';
 
 function offlineDb() {
     return new Promise((resolve, reject) => {
-        const request = indexedDB.open(OFFLINE_DB_NAME, 1);
-        request.onupgradeneeded = () => request.result.createObjectStore(OFFLINE_STORE, { keyPath: 'clientId' });
+        const request = indexedDB.open(OFFLINE_DB_NAME, 2);
+        request.onupgradeneeded = () => {if(!request.result.objectStoreNames.contains(OFFLINE_STORE))request.result.createObjectStore(OFFLINE_STORE,{keyPath:'clientId'});if(!request.result.objectStoreNames.contains(GEO_STORE))request.result.createObjectStore(GEO_STORE,{keyPath:'role'});};
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
     });
@@ -107,3 +108,7 @@ async function renderOfflineReports() {
 window.queueOfflineReport = queueOfflineReport;
 window.syncOfflineReports = syncOfflineReports;
 window.renderOfflineReports = renderOfflineReports;
+async function saveGeoCache(role,data){const db=await offlineDb();return new Promise((resolve,reject)=>{const request=db.transaction(GEO_STORE,'readwrite').objectStore(GEO_STORE).put({role,data,savedAt:new Date().toISOString()});request.onsuccess=resolve;request.onerror=()=>reject(request.error);});}
+async function loadGeoCache(role){const db=await offlineDb();return new Promise((resolve,reject)=>{const request=db.transaction(GEO_STORE).objectStore(GEO_STORE).get(role);request.onsuccess=()=>resolve(request.result||null);request.onerror=()=>reject(request.error);});}
+async function clearGeoCache(){const db=await offlineDb();return new Promise((resolve,reject)=>{const request=db.transaction(GEO_STORE,'readwrite').objectStore(GEO_STORE).clear();request.onsuccess=resolve;request.onerror=()=>reject(request.error);});}
+window.SmartWasteGeoCache={save:saveGeoCache,load:loadGeoCache,clear:clearGeoCache};
