@@ -5,9 +5,15 @@
 Le centre commun `static/communications.js` est chargé par les interfaces citoyen,
 agent, ramasseur et gestionnaire. Il affiche l'historique paginé, le compteur non
 lu, la lecture individuelle et globale, les états vide/chargement/erreur et les
-liens internes validés. Il interroge l'API toutes les 30 secondes; les WebSockets
-historiques restent cloisonnés par utilisateur mais ne transportent pas encore ce
-catalogue complet.
+liens internes validés. Une connexion WebSocket commune authentifiée par
+sous-protocole reçoit le catalogue complet. Elle déduplique par identifiant,
+reconnecte avec un délai exponentiel borné à 30 secondes et réactive le polling
+toutes les 30 secondes lorsqu'elle n'est pas saine.
+
+La livraison utilise l'outbox transactionnelle de la migration 005. La création de
+notification et sa ligne de livraison sont atomiques. Le dispatcher, sur une autre
+transaction, ne voit donc jamais une notification annulée. Après livraison privée
+au destinataire il marque l'événement livré; un échec demeure réessayable.
 
 Les événements effectivement reliés sont: réception, changement d'état et résultat
 de preuve d'un signalement; création et modification d'un abonnement; affectation,
@@ -45,6 +51,11 @@ lue et enfin close. Une conservation applicative de 365 jours après clôture es
 recommandée; aucun effacement automatique n'est activé dans cette tranche afin de
 ne pas supprimer de données sans politique validée.
 
+La vue intégrée liste et filtre les conversations ouvertes ou closes, affiche le
+type et l'identifiant de ressource, les rôles participants, le compteur non lu et
+un lien contextuel. Elle pagine les messages, distingue expéditeur/destinataire et
+système, permet texte, photo privée, lecture, clôture, abus et rappel.
+
 IndexedDB conserve UUID, conversation, texte, photo facultative, date, tentatives,
 état et dernière erreur. Les états sont `pending`, `sending`, `failed` et
 `auth_required`; le succès serveur supprime seulement alors l'entrée locale. La
@@ -69,4 +80,5 @@ journalisé sans contenu d'appel. Aucun numéro personnel, VoIP, WebRTC ou audio
 `migrations/004_communications.sql` est additive et aligne notifications, support,
 conversations, participants, messages, lectures, abus et rappels. Le fichier
 `.down.sql` est volontairement non destructif. `test.sql` demeure le schéma de
-référence historique aligné.
+référence historique aligné. `migrations/005_notification_outbox.sql` ajoute la
+livraison WebSocket transactionnelle et idempotente.

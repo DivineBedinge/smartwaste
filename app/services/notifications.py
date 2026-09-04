@@ -51,5 +51,47 @@ def create_notification(
          resource_type, resource_id, str(idempotency_key) if idempotency_key else None),
     )
     notification_id = cur.fetchone()[0]
+    cur.execute(
+        """INSERT INTO notification_delivery_outbox(notification_id, recipient_id)
+           VALUES (%s, %s) ON CONFLICT (notification_id) DO NOTHING""",
+        (notification_id, recipient_id),
+    )
     cur.close()
     return notification_id
+
+
+def pending_notification_events(conn, limit: int = 100) -> list[dict]:
+    """Claim committed notification events; callers publish then acknowledge them."""
+    cur = conn.cursor()
+    cur.execute(
+        """SELECT o.notification_id,o.recipient_id,n.notification_type,n.translation_key,
+                  n.translation_params,n.resource_type,n.resource_id,n.created_at
+           FROM notification_delivery_outbox o
+           JOIN notifications n ON n.id=o.notification_id
+           WHERE o.delivered_at IS NULL
+           ORDER BY o.notification_id LIMIT %s FOR UPDATE OF o SKIP LOCKED""",
+        (limit,),
+    )
+    columns = ("notification_id", "recipient_id", "type", "translation_key",
+               "translation_params", "resource_type", "resource_id", "created_at")
+    events = [dict(zip(columns, row)) for row in cur.fetchall()]
+    cur.close()
+    return events
+
+
+def acknowledge_notification_event(conn, notification_id: int) -> None:
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE notification_delivery_outbox SET delivered_at=NOW(), attempts=attempts+1 WHERE notification_id=%s AND delivered_at IS NULL",
+        (notification_id,),
+    )
+    cur.close()
+
+
+def record_notification_failure(conn, notification_id: int, error: str) -> None:
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE notification_delivery_outbox SET attempts=attempts+1,last_error=%s WHERE notification_id=%s AND delivered_at IS NULL",
+        (error[:500], notification_id),
+    )
+    cur.close()

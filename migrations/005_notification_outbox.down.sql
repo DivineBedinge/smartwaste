@@ -1,0 +1,1 @@
+-- Réversion volontairement non destructive : conserver les livraisons auditables.

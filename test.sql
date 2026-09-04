@@ -228,6 +228,14 @@ CREATE TABLE IF NOT EXISTS notifications (
 CREATE UNIQUE INDEX IF NOT EXISTS uq_notifications_recipient_idempotency
     ON notifications(recipient_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS notification_delivery_outbox (
+    notification_id BIGINT PRIMARY KEY REFERENCES notifications(id) ON DELETE CASCADE,
+    recipient_id INTEGER NOT NULL REFERENCES users(id), attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    last_error VARCHAR(500), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), delivered_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_notification_outbox_pending
+    ON notification_delivery_outbox(notification_id) WHERE delivered_at IS NULL;
+
 CREATE TABLE IF NOT EXISTS conversations (
     id BIGSERIAL PRIMARY KEY, resource_type VARCHAR(32) NOT NULL CHECK (resource_type IN ('report','collection','tour','support')),
     resource_id INTEGER NOT NULL, created_by INTEGER NOT NULL REFERENCES users(id),

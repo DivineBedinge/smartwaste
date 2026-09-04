@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from psycopg2.extras import Json, RealDictCursor
@@ -111,7 +111,11 @@ def get_or_create_conversation(payload: ConversationCreate, user=Depends(current
 def list_conversations(limit:int=20,offset:int=0,user=Depends(current_user)):
     if limit<1 or limit>100 or offset<0: raise HTTPException(422,"Pagination invalide")
     conn=get_db_connection(); cur=conn.cursor(cursor_factory=RealDictCursor)
-    cur.execute("SELECT c.id,c.resource_type,c.resource_id,c.status,c.created_at,(SELECT COUNT(*) FROM messages m WHERE m.conversation_id=c.id AND m.sender_id<>%s AND m.created_at>COALESCE((SELECT last_read_at FROM conversation_reads r WHERE r.conversation_id=c.id AND r.user_id=%s),'-infinity')) AS unread_count FROM conversations c JOIN conversation_participants p ON p.conversation_id=c.id WHERE p.user_id=%s ORDER BY c.created_at DESC,c.id DESC LIMIT %s OFFSET %s",(user["user_id"],user["user_id"],user["user_id"],limit,offset))
+    cur.execute("""SELECT c.id,c.resource_type,c.resource_id,c.status,c.created_at,
+        (SELECT ARRAY_AGG(DISTINCT u.role ORDER BY u.role) FROM conversation_participants cp JOIN users u ON u.id=cp.user_id WHERE cp.conversation_id=c.id) AS participant_roles,
+        (SELECT COUNT(*) FROM messages m WHERE m.conversation_id=c.id AND m.sender_id<>%s AND m.created_at>COALESCE((SELECT last_read_at FROM conversation_reads r WHERE r.conversation_id=c.id AND r.user_id=%s),'-infinity')) AS unread_count
+        FROM conversations c JOIN conversation_participants p ON p.conversation_id=c.id WHERE p.user_id=%s
+        ORDER BY c.created_at DESC,c.id DESC LIMIT %s OFFSET %s""",(user["user_id"],user["user_id"],user["user_id"],limit,offset))
     rows=cur.fetchall(); cur.close(); conn.close(); return rows
 
 
@@ -119,7 +123,21 @@ def list_conversations(limit:int=20,offset:int=0,user=Depends(current_user)):
 def list_messages(conversation_id:int,limit:int=30,offset:int=0,user=Depends(current_user)):
     if limit<1 or limit>100 or offset<0: raise HTTPException(422,"Pagination invalide")
     conn=get_db_connection(); cur=conn.cursor(cursor_factory=RealDictCursor); require_participant(cur,conversation_id,user["user_id"])
-    cur.execute("SELECT id,sender_id,client_id,message_type,body,attachment_mime,created_at FROM messages WHERE conversation_id=%s ORDER BY created_at DESC,id DESC LIMIT %s OFFSET %s",(conversation_id,limit,offset)); rows=cur.fetchall(); cur.close(); conn.close(); return rows
+    cur.execute("""SELECT m.id,m.sender_id,m.client_id,m.message_type,m.body,m.attachment_mime,
+        (m.attachment_base64 IS NOT NULL) AS has_attachment,m.created_at,u.role AS sender_role
+        FROM messages m LEFT JOIN users u ON u.id=m.sender_id WHERE m.conversation_id=%s
+        ORDER BY m.created_at DESC,m.id DESC LIMIT %s OFFSET %s""",(conversation_id,limit,offset)); rows=cur.fetchall(); cur.close(); conn.close(); return rows
+
+
+@router.get("/messages/{message_id}/attachment")
+def get_message_attachment(message_id:int,user=Depends(current_user)):
+    conn=get_db_connection(); cur=conn.cursor()
+    cur.execute("SELECT conversation_id,attachment_base64,attachment_mime FROM messages WHERE id=%s",(message_id,)); row=cur.fetchone()
+    if not row or not row[1]: cur.close(); conn.close(); raise HTTPException(404,"Pièce jointe non trouvée")
+    require_participant(cur,row[0],user["user_id"])
+    content=base64.b64decode(row[1],validate=True); mime=row[2]
+    if mime not in {"image/jpeg","image/png","image/webp"}: cur.close(); conn.close(); raise HTTPException(415,"Type de pièce jointe invalide")
+    cur.close(); conn.close(); return Response(content=content,media_type=mime,headers={"Cache-Control":"private, no-store","X-Content-Type-Options":"nosniff"})
 
 
 @router.post("/conversations/{conversation_id}/messages")
@@ -160,7 +178,12 @@ def close_conversation(conversation_id:int,user=Depends(current_user)):
 def report_message(message_id:int,payload:AbuseReport,user=Depends(current_user)):
     conn=get_db_connection(); cur=conn.cursor(); cur.execute("SELECT conversation_id FROM messages WHERE id=%s",(message_id,)); row=cur.fetchone()
     if not row: cur.close(); conn.close(); raise HTTPException(404,"Message non trouvé")
-    require_participant(cur,row[0],user["user_id"]); cur.execute("INSERT INTO message_reports(message_id,reporter_id,reason) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING RETURNING id",(message_id,user["user_id"],payload.reason)); result=cur.fetchone(); conn.commit(); cur.close(); conn.close(); return {"reported":bool(result)}
+    require_participant(cur,row[0],user["user_id"]); cur.execute("INSERT INTO message_reports(message_id,reporter_id,reason) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING RETURNING id",(message_id,user["user_id"],payload.reason)); result=cur.fetchone()
+    if result:
+        cur.execute("SELECT id FROM users WHERE role IN ('gestionnaire','admin','municipal') AND active=TRUE")
+        for (recipient,) in cur.fetchall():
+            create_notification(conn,recipient,"message_reported","Message signalé","Un message contextuel a été signalé.","/gestionnaire#conversations","notification.message_reported",{"conversation_id":row[0]},resource_type="conversation",resource_id=row[0])
+    conn.commit(); cur.close(); conn.close(); return {"reported":bool(result)}
 
 
 @router.post("/callback-requests")

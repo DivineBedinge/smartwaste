@@ -1,4 +1,5 @@
 import re
+import asyncio
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Depends, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -45,7 +46,12 @@ from app.routers.workflows import router as workflows_router
 from app.routers.communications import router as communications_router
 from app.services.uploads import read_validated_image
 from app.services.routing import get_route
-from app.services.notifications import create_notification
+from app.services.notifications import (
+    acknowledge_notification_event,
+    create_notification,
+    pending_notification_events,
+    record_notification_failure,
+)
 from app.services.gps_tracking import PositionRateLimiter
 from app.services.ai_runtime import get_onnx_session, heavy_ai_disabled, runtime_status
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -193,6 +199,57 @@ class WSManager:
         await self._send_where(message, lambda identity: is_manager_role(identity["role"]))
 
 ws_manager = WSManager()
+notification_dispatch_task = None
+
+
+async def dispatch_notification_outbox_once(connection=None):
+    conn = connection or get_db_connection()
+    owns_connection = connection is None
+    try:
+        for event in pending_notification_events(conn):
+            payload = {key: value for key, value in event.items() if key != "recipient_id"}
+            if payload.get("created_at") is not None:
+                payload["created_at"] = payload["created_at"].isoformat()
+            try:
+                await ws_manager.send_to_user(event["recipient_id"], {"event": "notification", **payload})
+                acknowledge_notification_event(conn, event["notification_id"])
+            except Exception as error:
+                record_notification_failure(conn, event["notification_id"], str(error))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        if owns_connection:
+            conn.close()
+
+
+async def notification_dispatch_loop():
+    while True:
+        try:
+            await dispatch_notification_outbox_once()
+        except Exception:
+            pass
+        await asyncio.sleep(2)
+
+
+@app.on_event("startup")
+async def start_notification_dispatcher():
+    global notification_dispatch_task
+    if notification_dispatch_task is None or notification_dispatch_task.done():
+        notification_dispatch_task = asyncio.create_task(notification_dispatch_loop())
+
+
+@app.on_event("shutdown")
+async def stop_notification_dispatcher():
+    global notification_dispatch_task
+    if notification_dispatch_task:
+        notification_dispatch_task.cancel()
+        try:
+            await notification_dispatch_task
+        except asyncio.CancelledError:
+            pass
+        notification_dispatch_task = None
 
 class AgentCreate(BaseModel):
     email: str

@@ -115,6 +115,7 @@ def test_contextual_communication_is_idempotent_private_and_closable(api):
     first = client.post(
         f"/api/v1/conversations/{conversation_id}/messages",
         data={"client_id": client_id, "body": "Bonjour <script>alert(1)</script>"},
+        files={"file": ("proof.png", image, "image/png")},
         headers=bearer(users["citoyen"]),
     )
     duplicate = client.post(
@@ -124,6 +125,9 @@ def test_contextual_communication_is_idempotent_private_and_closable(api):
     )
     assert first.status_code == duplicate.status_code == 200
     assert first.json()["id"] == duplicate.json()["id"]
+    attachment = client.get(f"/api/v1/messages/{first.json()['id']}/attachment", headers=bearer(users["citoyen"]))
+    assert attachment.status_code == 200 and attachment.headers["content-type"] == "image/png"
+    assert client.get(f"/api/v1/messages/{first.json()['id']}/attachment", headers=bearer(users["ramasseur"])).status_code == 404
     listed = client.get("/api/v1/conversations", headers=bearer(users["admin"]))
     assert listed.status_code == 200
     assert any(row["id"] == conversation_id for row in listed.json())

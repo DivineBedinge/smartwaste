@@ -6,6 +6,7 @@ import psycopg2.extras
 import pytest
 
 from database import require_test_database_url
+from app.services.notifications import create_notification
 
 
 @pytest.fixture
@@ -65,6 +66,24 @@ def test_communication_constraints_and_notification_idempotency(pg_connection):
         cursor.execute("ROLLBACK TO SAVEPOINT callback_constraint")
 
 
+def test_notification_outbox_is_atomic_and_deduplicated(pg_connection):
+    with pg_connection.cursor() as cursor:
+        cursor.execute("INSERT INTO users(email,password_hash,role) VALUES (%s,'x','citoyen') RETURNING id", (f"outbox-{uuid4()}@example.test",))
+        user_id = cursor.fetchone()[0]
+    key = uuid4()
+    notification_id = create_notification(pg_connection, user_id, "test", "Test", "Test", idempotency_key=key)
+    assert create_notification(pg_connection, user_id, "test", "Test", "Test", idempotency_key=key) == notification_id
+    with pg_connection.cursor() as cursor:
+        cursor.execute("SELECT COUNT(*) FROM notification_delivery_outbox WHERE notification_id=%s", (notification_id,))
+        assert cursor.fetchone()[0] == 1
+        cursor.execute("SAVEPOINT outbox_rollback")
+    rolled_back_id = create_notification(pg_connection, user_id, "rollback", "Test", "Test", idempotency_key=uuid4())
+    with pg_connection.cursor() as cursor:
+        cursor.execute("ROLLBACK TO SAVEPOINT outbox_rollback")
+        cursor.execute("SELECT COUNT(*) FROM notification_delivery_outbox WHERE notification_id=%s", (rolled_back_id,))
+        assert cursor.fetchone()[0] == 0
+
+
 def test_constraints_foreign_keys_and_idempotency_index_exist(pg_connection):
     with pg_connection.cursor() as cursor:
         cursor.execute("SELECT contype, pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid='reports'::regclass")
@@ -83,6 +102,7 @@ def test_migration_history_has_ordered_checksums(pg_connection):
         assert [row[0] for row in rows] == [
             "001_workflows.sql", "002_collector_operations.sql", "003_collection_cancellation.sql",
             "004_communications.sql",
+            "005_notification_outbox.sql",
         ]
         assert all(len(row[1]) == 64 for row in rows)
 
