@@ -1,6 +1,7 @@
 """Hermetic API integration tests; never fall back to the personal database."""
 import base64
 import os
+from datetime import date, timedelta
 from uuid import uuid4
 
 import psycopg2
@@ -10,6 +11,7 @@ from fastapi.testclient import TestClient
 import auth
 import main
 from app.routers import communications, media, workflows
+from app.services.automation import run_daily_automation
 from core.security import create_access_token, hash_password
 from database import require_test_database_url
 
@@ -163,3 +165,53 @@ def test_support_and_callback_are_available_to_citizen(api):
     manager_notifications = client.get("/api/v1/notifications?limit=10&unread=true", headers=bearer(users["admin"]))
     assert manager_notifications.status_code == 200
     assert {row["notification_type"] for row in manager_notifications.json()} >= {"support_received", "callback_requested"}
+
+
+def test_report_assignment_private_proof_and_human_decision(api):
+    client, users = api
+    image = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
+    report=client.post("/api/v1/signalements",files={"file":("r.png",image,"image/png")},data={"lat":"4.05","lon":"9.70","client_id":str(uuid4())},headers=bearer(users["citoyen"]));assert report.status_code==200 and report.json()["status"]=="valide"
+    report_id=report.json()["id"]
+    assigned=client.put(f"/api/v1/signalements/{report_id}/assigner?agent_id={users['agent']['id']}",headers=bearer(users["admin"]));assert assigned.status_code==200 and assigned.json()["status"]=="assigne"
+    assert client.put(f"/api/v1/signalements/{report_id}/prendre-en-charge",headers=bearer(users["ramasseur"])).status_code==403
+    assert client.put(f"/api/v1/signalements/{report_id}/prendre-en-charge",headers=bearer(users["agent"])).status_code==200
+    proof=client.post(f"/api/v1/signalements/{report_id}/preuve-traitement",files={"file":("p.png",image,"image/png")},data={"lat":"4.05","lon":"9.70","comment":"Nettoyé"},headers=bearer(users["agent"]));assert proof.status_code==200 and proof.json()["status"]=="verification_requise"
+    decision=client.patch(f"/api/v1/signalements/{report_id}/preuves/{proof.json()['proof_id']}/decision",json={"decision":"acceptee"},headers=bearer(users["admin"]));assert decision.status_code==200 and decision.json()["report_status"]=="cloture"
+    dispute=client.post(f"/api/v1/signalements/{report_id}/contester",data={"reason":"incomplet","comment":"Le site reste sale"},headers=bearer(users["citoyen"]));assert dispute.status_code==200 and dispute.json()["report_status"]=="reouvert"
+
+
+def test_domestic_collection_accept_prove_and_confirm(api):
+    client,users=api
+    plan=client.post("/api/v1/gestionnaire/plans",json={"name":"Hebdo test","frequency":"hebdomadaire","price":1000,"service_area":None},headers=bearer(users["admin"]));assert plan.status_code==200
+    subscription=client.post("/api/v1/abonnements-domestiques",json={"plan_id":plan.json()[0],"lat":4.05,"lon":9.70},headers=bearer(users["citoyen"]));assert subscription.status_code==200
+    start=date.today();generated=client.post("/api/v1/gestionnaire/collectes/generer",json={"start":start.isoformat(),"until":(start+timedelta(days=14)).isoformat()},headers=bearer(users["admin"]));assert generated.status_code==200 and generated.json()["created"]>=1
+    rows=client.get("/api/v1/gestionnaire/collectes",headers=bearer(users["admin"])).json();occurrence_id=next(row[0] for row in rows if row[1]==subscription.json()["id"])
+    assigned=client.post(f"/api/v1/gestionnaire/collectes/{occurrence_id}/affecter",json={"collector_id":users["ramasseur"]["id"]},headers=bearer(users["admin"]));assert assigned.status_code==200 and assigned.json()["status"]=="proposee"
+    assert client.patch(f"/api/v1/ramasseur/collectes/{occurrence_id}/proposition",json={"accept":True},headers=bearer(users["ramasseur"])).json()["status"]=="acceptee"
+    for status in ("en_route","arrivee"):
+        assert client.patch(f"/api/v1/ramasseur/collectes/{occurrence_id}/status",json={"status":status},headers=bearer(users["ramasseur"])).status_code==200
+    image=base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
+    proof=client.post(f"/api/v1/ramasseur/collectes/{occurrence_id}/preuve",files={"file":("c.png",image,"image/png")},headers=bearer(users["ramasseur"]));assert proof.status_code==200 and proof.json()["status"]=="en_attente_confirmation"
+    confirmed=client.patch(f"/api/v1/citoyen/collectes/{occurrence_id}/decision",json={"confirm":True},headers=bearer(users["citoyen"]));assert confirmed.status_code==200 and confirmed.json()["status"]=="confirmee"
+
+
+def test_collection_refusal_requires_reason_and_releases_assignment(api):
+    client, users = api
+    plan = client.post("/api/v1/gestionnaire/plans", json={"name":"Refus test","frequency":"hebdomadaire","price":500}, headers=bearer(users["admin"])).json()
+    subscription = client.post("/api/v1/abonnements-domestiques", json={"plan_id":plan[0],"lat":4.05,"lon":9.70}, headers=bearer(users["citoyen"])).json()
+    start = date.today()
+    client.post("/api/v1/gestionnaire/collectes/generer", json={"start":start.isoformat(),"until":(start+timedelta(days=7)).isoformat()}, headers=bearer(users["admin"]))
+    occurrence_id = next(row[0] for row in client.get("/api/v1/gestionnaire/collectes",headers=bearer(users["admin"])).json() if row[1]==subscription["id"])
+    client.post(f"/api/v1/gestionnaire/collectes/{occurrence_id}/affecter",json={"collector_id":users["ramasseur"]["id"]},headers=bearer(users["admin"]))
+    assert client.patch(f"/api/v1/ramasseur/collectes/{occurrence_id}/proposition",json={"accept":False},headers=bearer(users["ramasseur"])).status_code == 422
+    refused = client.patch(f"/api/v1/ramasseur/collectes/{occurrence_id}/proposition",json={"accept":False,"reason":"Véhicule indisponible"},headers=bearer(users["ramasseur"]))
+    assert refused.status_code == 200 and refused.json()["status"] == "refusee"
+    assert all(row[0] != occurrence_id for row in client.get("/api/v1/ramasseur/collectes",headers=bearer(users["ramasseur"])).json())
+
+
+def test_daily_automation_is_idempotent(api):
+    _, _users = api
+    result = run_daily_automation(main.get_db_connection(), date.today())
+    duplicate = run_daily_automation(main.get_db_connection(), date.today())
+    assert result["status"] == "completed"
+    assert duplicate["status"] == "already_completed"

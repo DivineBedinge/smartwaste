@@ -104,6 +104,7 @@ def test_migration_history_has_ordered_checksums(pg_connection):
             "004_communications.sql",
             "005_notification_outbox.sql",
             "006_private_media.sql",
+            "007_operational_workflows.sql",
         ]
         assert all(len(row[1]) == 64 for row in rows)
 
@@ -143,3 +144,15 @@ def test_assignment_transaction_can_be_rolled_back(pg_connection):
         cursor.execute("ROLLBACK TO SAVEPOINT before_assignment")
         cursor.execute("SELECT collector_id,status FROM collection_occurrences WHERE id=%s", (occurrence_id,))
         assert cursor.fetchone() == (None, "programmee")
+
+
+def test_operational_workflow_schema_and_constraints(pg_connection):
+    with pg_connection.cursor() as cursor:
+        cursor.execute("SELECT to_regclass(name) FROM unnest(%s::text[]) AS name", (["report_transition_history","report_proofs","report_disputes","assignment_history","collection_transition_history","job_runs"],))
+        assert all(row[0] for row in cursor.fetchall())
+        cursor.execute("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid='collection_occurrences'::regclass AND contype='c'")
+        definitions = " ".join(row[0] for row in cursor.fetchall())
+        for status in ("proposee","acceptee","refusee","en_attente_confirmation","contestee"):
+            assert status in definitions
+        cursor.execute("SELECT indexdef FROM pg_indexes WHERE indexname='uq_collection_occurrence_schedule'")
+        assert "unique" in cursor.fetchone()[0].lower()

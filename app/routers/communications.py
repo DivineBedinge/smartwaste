@@ -63,7 +63,7 @@ def eligible_users(cur, resource_type: str, resource_id: int) -> set[int]:
                FROM collection_occurrences o
                JOIN domestic_subscriptions s ON s.id=o.subscription_id
                WHERE o.id=%s
-                 AND o.status IN ('affectee','en_route','arrivee')""",
+                 AND o.status IN ('acceptee','en_route','arrivee','en_attente_confirmation')""",
             (resource_id,),
         )
     elif resource_type == "tour":

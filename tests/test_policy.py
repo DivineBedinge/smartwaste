@@ -4,6 +4,7 @@ from core.policy import (
     Role,
     can_transition,
     is_manager_role,
+    validate_transition,
 )
 
 
@@ -33,3 +34,13 @@ def test_collection_transitions_require_assignment_and_arrival():
     assert can_transition(COLLECTION_TRANSITIONS, "programmee", "affectee")
     assert not can_transition(COLLECTION_TRANSITIONS, "programmee", "effectuee")
     assert can_transition(COLLECTION_TRANSITIONS, "manquee", "reprogrammee")
+    assert can_transition(COLLECTION_TRANSITIONS, "proposee", "acceptee")
+    assert not can_transition(COLLECTION_TRANSITIONS, "proposee", "en_route")
+
+
+def test_transition_role_rules_are_enforced():
+    from core.policy import REPORT_TRANSITION_ROLES
+    validate_transition(REPORT_TRANSITIONS,"valide","assigne","gestionnaire",REPORT_TRANSITION_ROLES)
+    import pytest
+    with pytest.raises(PermissionError):
+        validate_transition(REPORT_TRANSITIONS,"valide","assigne","agent",REPORT_TRANSITION_ROLES)

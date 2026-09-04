@@ -1,0 +1,1 @@
+-- Réversion non destructive : conserver les preuves et historiques métier.

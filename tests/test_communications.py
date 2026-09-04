@@ -35,7 +35,7 @@ def test_collection_conversation_requires_active_occurrence():
     cursor = Cursor([(5, 7), (10,)])
     users = communications.eligible_users(cursor, "collection", 2)
     assert users == {5, 7, 10}
-    assert "o.status IN ('affectee','en_route','arrivee')" in cursor.queries[0][0]
+    assert "o.status IN ('acceptee','en_route','arrivee','en_attente_confirmation')" in cursor.queries[0][0]
 
 
 def test_unknown_conversation_resource_is_rejected():

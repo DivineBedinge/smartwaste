@@ -56,26 +56,58 @@ REPORT_TRANSITIONS = {
 
 DOMESTIC_COLLECTION_STATES = {
     "programmee",
+    "proposee",
     "affectee",
+    "acceptee",
+    "refusee",
     "en_route",
     "arrivee",
     "effectuee",
+    "en_attente_confirmation",
     "confirmee",
+    "contestee",
     "manquee",
     "reprogrammee",
     "annulee",
 }
 
 COLLECTION_TRANSITIONS = {
-    "programmee": {"affectee", "reprogrammee", "manquee"},
-    "affectee": {"en_route", "reprogrammee", "manquee"},
+    "programmee": {"proposee", "affectee", "reprogrammee", "manquee", "annulee"},
+    "proposee": {"acceptee", "refusee", "reprogrammee", "annulee"},
+    "affectee": {"acceptee", "en_route", "refusee", "reprogrammee", "manquee", "annulee"},
+    "acceptee": {"en_route", "reprogrammee", "manquee", "annulee"},
+    "refusee": {"programmee", "reprogrammee"},
     "en_route": {"arrivee", "manquee"},
     "arrivee": {"effectuee", "manquee"},
-    "effectuee": {"confirmee"},
+    "effectuee": {"en_attente_confirmation"},
+    "en_attente_confirmation": {"confirmee", "contestee"},
+    "contestee": {"confirmee", "reprogrammee"},
     "confirmee": set(),
     "manquee": {"reprogrammee"},
-    "reprogrammee": {"affectee", "manquee"},
+    "reprogrammee": {"proposee", "affectee", "manquee", "annulee"},
+    "annulee": set(),
 }
+
+
+REPORT_TRANSITION_ROLES = {
+    "valide": MANAGER_ROLES,
+    "rejete": MANAGER_ROLES,
+    "hors_sujet": MANAGER_ROLES,
+    "assigne": MANAGER_ROLES,
+    "en_route": {Role.AGENT.value},
+    "en_cours": {Role.AGENT.value, *MANAGER_ROLES},
+    "traite": {Role.AGENT.value, *MANAGER_ROLES},
+    "verification_requise": {Role.AGENT.value, *MANAGER_ROLES},
+    "cloture": MANAGER_ROLES,
+    "reouvert": MANAGER_ROLES,
+}
+
+
+def validate_transition(transitions, current: str, target: str, role: str, role_rules=None) -> None:
+    if not can_transition(transitions, current, target):
+        raise ValueError("Transition invalide")
+    if role_rules and target in role_rules and role not in role_rules[target]:
+        raise PermissionError("Rôle non autorisé pour cette transition")
 
 
 def is_manager_role(role: str) -> bool:

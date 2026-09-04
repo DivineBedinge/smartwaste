@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from psycopg2.extras import Json
@@ -10,6 +10,9 @@ from core.policy import COLLECTION_TRANSITIONS, can_transition, is_manager_role
 from app.services.collections import generate_database_occurrences
 from app.services.gps_retention import purge_old_positions
 from app.services.notifications import create_notification
+from app.services.media_assets import store_media_with_compensation
+from app.services.media_storage import get_media_storage
+from app.services.uploads import read_validated_image
 from core.security import decode_token
 from database import get_db_connection
 
@@ -69,10 +72,22 @@ class SupportRequestCreate(BaseModel):
 class CollectionStatusUpdate(BaseModel):
     status: str
     missed_reason: Optional[str] = Field(default=None, max_length=64)
+    comment: Optional[str] = Field(default=None, max_length=1000)
 
 
 class CollectorAssignment(BaseModel):
     collector_id: int
+    reason: Optional[str] = Field(default=None, max_length=1000)
+
+
+class CollectorProposalResponse(BaseModel):
+    accept: bool
+    reason: Optional[str] = Field(default=None, max_length=500)
+
+
+class CitizenCollectionDecision(BaseModel):
+    confirm: bool
+    reason: Optional[str] = Field(default=None, max_length=1000)
 
 
 class PlanCreate(BaseModel):
@@ -155,6 +170,14 @@ def create_domestic_subscription(
 ):
     conn = get_db_connection()
     cur = conn.cursor()
+    if payload.plan_id is not None:
+        cur.execute("SELECT 1 FROM subscription_plans WHERE id=%s AND active=TRUE",(payload.plan_id,))
+        if not cur.fetchone(): cur.close();conn.close();raise HTTPException(422,"Plan actif introuvable")
+    if payload.preferred_slot_id is not None:
+        cur.execute("SELECT 1 FROM service_slots WHERE id=%s AND active=TRUE AND (%s IS NULL OR service_area=%s)",(payload.preferred_slot_id,payload.service_area,payload.service_area))
+        if not cur.fetchone(): cur.close();conn.close();raise HTTPException(422,"Créneau invalide pour cette zone")
+    cur.execute("SELECT 1 FROM domestic_subscriptions WHERE user_id=%s AND status IN ('active','suspended') AND (%s IS NULL OR plan_id=%s)",(user["user_id"],payload.plan_id,payload.plan_id))
+    if cur.fetchone(): cur.close();conn.close();raise HTTPException(409,"Abonnement incompatible déjà existant")
     cur.execute(
         """
         INSERT INTO domestic_subscriptions
@@ -560,6 +583,33 @@ def list_all_collections(user: dict = Depends(require_manager)):
     return rows
 
 
+@router.get("/gestionnaire/signalements-operationnels")
+def list_operational_reports(user: dict = Depends(require_manager)):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT r.id, r.status, r.severity, r.address_text, r.agent_id,
+               p.id, p.status, d.id, d.status
+        FROM reports r
+        LEFT JOIN LATERAL (
+            SELECT id, status FROM report_proofs WHERE report_id=r.id
+            ORDER BY created_at DESC, id DESC LIMIT 1
+        ) p ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT id, status FROM report_disputes WHERE report_id=r.id
+            ORDER BY created_at DESC, id DESC LIMIT 1
+        ) d ON TRUE
+        WHERE r.status IN ('valide','assigne','en_cours','verification_requise','cloture','reouvert')
+        ORDER BY r.updated_at DESC LIMIT 500
+        """
+    )
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rows
+
+
 @router.get("/gestionnaire/audit-logs")
 def list_audit_logs(user: dict = Depends(require_manager)):
     conn = get_db_connection()
@@ -597,6 +647,20 @@ def list_collector_collections(user: dict = Depends(require_collector)):
     cur.close()
     conn.close()
     return rows
+
+
+@router.get("/citoyen/collectes")
+def list_citizen_collections(user: dict = Depends(require_citizen)):
+    conn=get_db_connection();cur=conn.cursor()
+    cur.execute("""SELECT o.id,o.scheduled_for,o.status,o.proof_media_asset_id,o.confirmation_due_at,s.address_text
+        FROM collection_occurrences o JOIN domestic_subscriptions s ON s.id=o.subscription_id
+        WHERE s.user_id=%s ORDER BY o.scheduled_for DESC LIMIT 200""",(user["user_id"],));rows=cur.fetchall();cur.close();conn.close();return rows
+
+
+@router.get("/agent/signalements")
+def list_agent_reports(user: dict = Depends(current_user)):
+    if user.get("role")!="agent": raise HTTPException(403,"Réservé aux agents")
+    conn=get_db_connection();cur=conn.cursor();cur.execute("SELECT id,status,severity,address_text,proof_media_asset_id,updated_at FROM reports WHERE agent_id=%s ORDER BY updated_at DESC LIMIT 200",(user["user_id"],));rows=cur.fetchall();cur.close();conn.close();return rows
 
 
 @router.post("/gestionnaire/collectes/{occurrence_id}/affecter")
@@ -662,13 +726,15 @@ def assign_collection(
     cur.execute(
         """
         UPDATE collection_occurrences
-        SET collector_id = %s, status = 'affectee', updated_at = NOW()
+        SET collector_id = %s, status = 'proposee', response_due_at=NOW() + (%s || ' hours')::interval, updated_at = NOW()
         WHERE id = %s
         RETURNING id, collector_id, status
         """,
-        (collector[0], occurrence_id),
+        (collector[0], int(__import__('os').getenv('COLLECTOR_RESPONSE_HOURS','24')), occurrence_id),
     )
     result = cur.fetchone()
+    cur.execute("INSERT INTO assignment_history(resource_type,resource_id,assignee_id,actor_id,action,reason) VALUES ('collection',%s,%s,%s,'assigned',%s)",(occurrence_id,collector[0],user["user_id"],payload.reason))
+    cur.execute("INSERT INTO collection_transition_history(occurrence_id,actor_id,actor_role,from_status,to_status,reason) VALUES (%s,%s,%s,%s,'proposee',%s)",(occurrence_id,user["user_id"],user["role"],occurrence[2],payload.reason))
     notify_collection(
         conn, collector[0], occurrence_id, "collection_assigned",
         "Nouvelle collecte affectée",
@@ -681,13 +747,27 @@ def assign_collection(
     return {"id": result[0], "collector_id": result[1], "status": result[2]}
 
 
+@router.patch("/ramasseur/collectes/{occurrence_id}/proposition")
+def respond_collection_proposal(occurrence_id:int,payload:CollectorProposalResponse,user=Depends(require_collector)):
+    if not payload.accept and not (payload.reason or "").strip(): raise HTTPException(422,"Motif de refus obligatoire")
+    conn=get_db_connection();cur=conn.cursor();cur.execute("SELECT o.status,s.user_id FROM collection_occurrences o JOIN domestic_subscriptions s ON s.id=o.subscription_id WHERE o.id=%s AND o.collector_id=%s FOR UPDATE",(occurrence_id,user["user_id"]));row=cur.fetchone()
+    if not row: cur.close();conn.close();raise HTTPException(404,"Collecte non trouvée")
+    if row[0] not in {"proposee","affectee"}: cur.close();conn.close();raise HTTPException(409,"Proposition déjà traitée")
+    target="acceptee" if payload.accept else "refusee"
+    cur.execute("UPDATE collection_occurrences SET status=%s,collector_id=CASE WHEN %s THEN collector_id ELSE NULL END,refusal_reason=%s,updated_at=NOW() WHERE id=%s",(target,payload.accept,payload.reason,occurrence_id))
+    cur.execute("INSERT INTO assignment_history(resource_type,resource_id,assignee_id,actor_id,action,reason) VALUES ('collection',%s,%s,%s,%s,%s)",(occurrence_id,user["user_id"],user["user_id"],"accepted" if payload.accept else "refused",payload.reason))
+    cur.execute("INSERT INTO collection_transition_history(occurrence_id,actor_id,actor_role,from_status,to_status,reason) VALUES (%s,%s,%s,%s,%s,%s)",(occurrence_id,user["user_id"],user["role"],row[0],target,payload.reason))
+    create_notification(conn,row[1],"collection_proposal_response","Collecte mise à jour",f"La proposition de collecte #{occurrence_id} a été {'acceptée' if payload.accept else 'refusée'}.",f"/citoyen#collecte-{occurrence_id}","notification.collection_proposal_response",{"collection_id":occurrence_id,"status":target},resource_type="collection",resource_id=occurrence_id)
+    conn.commit();cur.close();conn.close();return {"id":occurrence_id,"status":target}
+
+
 @router.patch("/ramasseur/collectes/{occurrence_id}/status")
 def update_collector_collection(
     occurrence_id: int,
     payload: CollectionStatusUpdate,
     user: dict = Depends(require_collector),
 ):
-    if payload.status not in {"en_route", "arrivee", "effectuee", "manquee"}:
+    if payload.status not in {"en_route", "arrivee", "manquee"}:
         raise HTTPException(400, "Transition non autorisée pour un ramasseur")
     conn = get_db_connection()
     cur = conn.cursor()
@@ -714,17 +794,18 @@ def update_collector_collection(
         SET status = %s, missed_reason = %s,
             started_at = CASE WHEN %s = 'en_route' THEN NOW() ELSE started_at END,
             arrived_at = CASE WHEN %s = 'arrivee' THEN NOW() ELSE arrived_at END,
-            completed_at = CASE WHEN %s = 'effectuee' THEN NOW() ELSE completed_at END,
+            incident_comment = %s,
             updated_at = NOW()
         WHERE id = %s AND collector_id = %s
         RETURNING id, status
         """,
         (
             payload.status, payload.missed_reason, payload.status, payload.status,
-            payload.status, occurrence_id, user["user_id"],
+            payload.comment, occurrence_id, user["user_id"],
         ),
     )
     result = cur.fetchone()
+    cur.execute("INSERT INTO collection_transition_history(occurrence_id,actor_id,actor_role,from_status,to_status,reason) VALUES (%s,%s,%s,%s,%s,%s)",(occurrence_id,user["user_id"],user["role"],current[0],payload.status,payload.missed_reason or payload.comment))
     if payload.status == "manquee":
         notify_collection(
             conn, user["user_id"], occurrence_id, "collection_missed",
@@ -736,6 +817,31 @@ def update_collector_collection(
     cur.close()
     conn.close()
     return {"id": result[0], "status": result[1]}
+
+
+@router.post("/ramasseur/collectes/{occurrence_id}/preuve")
+async def submit_collection_proof(occurrence_id:int,file:UploadFile=File(...),comment:Optional[str]=Form(None),user=Depends(require_collector)):
+    content=await read_validated_image(file);conn=get_db_connection();cur=conn.cursor();cur.execute("SELECT o.status,s.user_id FROM collection_occurrences o JOIN domestic_subscriptions s ON s.id=o.subscription_id WHERE o.id=%s AND o.collector_id=%s FOR UPDATE",(occurrence_id,user["user_id"]));row=cur.fetchone()
+    if not row: cur.close();conn.close();raise HTTPException(404,"Collecte non trouvée")
+    if row[0]!="arrivee": cur.close();conn.close();raise HTTPException(409,"La collecte doit être à l'état arrivée")
+    asset_id,_=store_media_with_compensation(conn,user["user_id"],"collection_proof",content,file.content_type,"collection",occurrence_id,"active",get_media_storage())
+    hours=int(__import__('os').getenv('COLLECTION_CONFIRMATION_HOURS','48'))
+    cur.execute("UPDATE collection_occurrences SET status='en_attente_confirmation',proof_media_asset_id=%s,proof_submitted_at=NOW(),completed_at=NOW(),confirmation_due_at=NOW()+(%s||' hours')::interval,incident_comment=%s,updated_at=NOW() WHERE id=%s",(asset_id,hours,comment,occurrence_id))
+    cur.execute("INSERT INTO collection_transition_history(occurrence_id,actor_id,actor_role,from_status,to_status,reason) VALUES (%s,%s,%s,%s,'en_attente_confirmation',%s)",(occurrence_id,user["user_id"],user["role"],row[0],comment))
+    create_notification(conn,row[1],"collection_proof_submitted","Collecte à confirmer",f"La collecte #{occurrence_id} attend votre confirmation.",f"/citoyen#collecte-{occurrence_id}","notification.collection_proof_submitted",{"collection_id":occurrence_id},resource_type="collection",resource_id=occurrence_id)
+    conn.commit();cur.close();conn.close();return {"id":occurrence_id,"status":"en_attente_confirmation","media_asset_id":asset_id}
+
+
+@router.patch("/citoyen/collectes/{occurrence_id}/decision")
+def decide_collection(occurrence_id:int,payload:CitizenCollectionDecision,user=Depends(require_citizen)):
+    if not payload.confirm and not (payload.reason or "").strip(): raise HTTPException(422,"Motif de contestation obligatoire")
+    conn=get_db_connection();cur=conn.cursor();cur.execute("SELECT o.status,o.collector_id FROM collection_occurrences o JOIN domestic_subscriptions s ON s.id=o.subscription_id WHERE o.id=%s AND s.user_id=%s FOR UPDATE",(occurrence_id,user["user_id"]));row=cur.fetchone()
+    if not row: cur.close();conn.close();raise HTTPException(404,"Collecte non trouvée")
+    if row[0]!="en_attente_confirmation": cur.close();conn.close();raise HTTPException(409,"Collecte non confirmable")
+    target="confirmee" if payload.confirm else "contestee";cur.execute("UPDATE collection_occurrences SET status=%s,confirmed_at=CASE WHEN %s THEN NOW() ELSE NULL END,updated_at=NOW() WHERE id=%s",(target,payload.confirm,occurrence_id));cur.execute("INSERT INTO collection_transition_history(occurrence_id,actor_id,actor_role,from_status,to_status,reason) VALUES (%s,%s,%s,%s,%s,%s)",(occurrence_id,user["user_id"],user["role"],row[0],target,payload.reason))
+    if not payload.confirm: cur.execute("INSERT INTO support_requests(author_id,author_role,category,subject,description,priority,resource_type,resource_id,status) VALUES (%s,'citoyen','preuve_contestee',%s,%s,'haute','collection',%s,'soumise')",(user["user_id"],f"Collecte #{occurrence_id} contestée",payload.reason,occurrence_id))
+    if row[1]: notify_collection(conn,row[1],occurrence_id,"collection_confirmed" if payload.confirm else "collection_disputed","Collecte mise à jour",f"La collecte #{occurrence_id} est {target}.",status=target)
+    conn.commit();cur.close();conn.close();return {"id":occurrence_id,"status":target}
 
 
 @router.patch("/gestionnaire/collectes/{occurrence_id}/reprogrammer")

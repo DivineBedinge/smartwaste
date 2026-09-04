@@ -412,6 +412,12 @@ def review_signalement(
             payload.reason,
         ),
     )
+    cur.execute(
+        "INSERT INTO report_transition_history(report_id,actor_id,actor_role,from_status,to_status,reason,decision_data) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+        (report_id, user["user_id"], user["role"], report["status"], final_status,
+         payload.reason, psycopg2.extras.Json({"final_severity": payload.final_severity})),
+    )
     conn.commit()
     cur.close()
     conn.close()
@@ -643,6 +649,8 @@ async def create_signalement(
     file: UploadFile = File(...),
     lat: float = Form(...),
     lon: float = Form(...),
+    accuracy_m: Optional[float] = Form(None),
+    comment: Optional[str] = Form(None),
     client_id: str = Form(...),
     description: Optional[str] = Form(None),
     address_text: Optional[str] = Form(None),
@@ -720,6 +728,9 @@ async def create_signalement(
         "report",report_id,"active",storage,
     )
     cur.execute("UPDATE reports SET initial_media_asset_id=%s WHERE id=%s",(asset_id,report_id))
+    ai_decision={"predicted_class":severity_decision.predicted_class,"confidence":confidence,"automatic":not severity_decision.human_review_required,"source":severity_decision.source}
+    cur.execute("INSERT INTO report_transition_history(report_id,actor_id,actor_role,to_status,decision_data) VALUES (%s,%s,%s,%s,%s)",(report_id,current_user["user_id"],current_user["role"],status,psycopg2.extras.Json(ai_decision)))
+    cur.execute("INSERT INTO audit_logs(actor_id,actor_role,action,resource_type,resource_id,new_value) VALUES (%s,%s,'ai_classification','report',%s,%s)",(current_user["user_id"],current_user["role"],report_id,psycopg2.extras.Json(ai_decision)))
 
     if is_primary:
         cur.execute("""
@@ -915,6 +926,11 @@ def update_signalement_status(
         WHERE id = %s RETURNING id, status
     """, (payload.status, report_id))
     result = cur.fetchone()
+    cur.execute(
+        "INSERT INTO report_transition_history(report_id,actor_id,actor_role,from_status,to_status,reason) "
+        "VALUES (%s,%s,%s,%s,%s,%s)",
+        (report_id, user["user_id"], user["role"], report["status"], payload.status, payload.reason),
+    )
     cur.execute("""
         INSERT INTO audit_logs
             (actor_id, actor_role, action, resource_type, resource_id,
@@ -946,11 +962,27 @@ def reclasser_signalement(report_id: int, nouvelle_severite: str, user: dict = D
         raise HTTPException(400, "Sévérité invalide")
     conn = get_db_connection()
     cur = conn.cursor()
+    cur.execute("SELECT status,severity FROM reports WHERE id=%s FOR UPDATE",(report_id,));before=cur.fetchone()
+    if not before: cur.close();conn.close();raise HTTPException(404,"Signalement non trouvé")
+    if before[0] not in {"a_verifier","en_attente_validation","classifie","valide"}: cur.close();conn.close();raise HTTPException(409,"Reclassification interdite dans cet état")
     cur.execute("""
         UPDATE reports SET severity = %s, status = 'valide', updated_at = NOW()
         WHERE id = %s RETURNING id, severity, status
     """, (nouvelle_severite, report_id))
     result = cur.fetchone()
+    cur.execute(
+        "INSERT INTO report_transition_history(report_id,actor_id,actor_role,from_status,to_status,decision_data) "
+        "VALUES (%s,%s,%s,%s,'valide',%s)",
+        (report_id, user["user_id"], user["role"], before[0],
+         psycopg2.extras.Json({"old_severity": before[1], "new_severity": nouvelle_severite})),
+    )
+    cur.execute(
+        "INSERT INTO audit_logs(actor_id,actor_role,action,resource_type,resource_id,old_value,new_value) "
+        "VALUES (%s,%s,'reclassification','report',%s,%s,%s)",
+        (user["user_id"], user["role"], report_id,
+         psycopg2.extras.Json({"severity": before[1]}),
+         psycopg2.extras.Json({"severity": nouvelle_severite})),
+    )
     conn.commit()
     cur.close()
     conn.close()
@@ -966,13 +998,27 @@ def valider_signalement(report_id: int, user: dict = Depends(require_admin)):
     report = cur.fetchone()
     if not report:
         raise HTTPException(404, "Signalement non trouvé")
-    if report["status"] != "soumis":
-        raise HTTPException(400, "Le signalement doit être 'soumis'")
+    if report["status"] not in {"soumis", "a_verifier", "en_attente_validation", "classifie"}:
+        cur.close()
+        conn.close()
+        raise HTTPException(409, "Le signalement ne peut pas être validé dans cet état")
     cur.execute("""
         UPDATE reports SET status = 'valide', updated_at = NOW()
         WHERE id = %s RETURNING id, status
     """, (report_id,))
     result = cur.fetchone()
+    cur.execute(
+        "INSERT INTO report_transition_history(report_id,actor_id,actor_role,from_status,to_status) "
+        "VALUES (%s,%s,%s,%s,'valide')",
+        (report_id, user["user_id"], user["role"], report["status"]),
+    )
+    cur.execute(
+        "INSERT INTO audit_logs(actor_id,actor_role,action,resource_type,resource_id,old_value,new_value) "
+        "VALUES (%s,%s,'report_validation','report',%s,%s,%s)",
+        (user["user_id"], user["role"], report_id,
+         psycopg2.extras.Json({"status": report["status"]}),
+         psycopg2.extras.Json({"status": "valide"})),
+    )
     conn.commit()
     cur.close()
     conn.close()
@@ -986,8 +1032,8 @@ def prendre_en_charge(report_id: int, user: dict = Depends(require_agent)):
     report = cur.fetchone()
     if not report:
         raise HTTPException(404, "Signalement non trouvé")
-    if report["status"] != "valide":
-        raise HTTPException(400, "Le signalement doit être 'valide'")
+    if report["status"] != "assigne":
+        raise HTTPException(400, "Le signalement doit être 'assigne'")
     if user["role"] == "agent" and report["agent_id"] != user["user_id"]:
         raise HTTPException(403, "Signalement non assigné à cet agent")
     cur.execute("""
@@ -995,10 +1041,21 @@ def prendre_en_charge(report_id: int, user: dict = Depends(require_agent)):
         WHERE id = %s RETURNING id, status
     """, (report_id,))
     result = cur.fetchone()
+    cur.execute("INSERT INTO report_transition_history(report_id,actor_id,actor_role,from_status,to_status) VALUES (%s,%s,%s,'assigne','en_cours')",(report_id,user["user_id"],user["role"]))
     conn.commit()
     cur.close()
     conn.close()
     return {"id": result["id"], "status": result["status"]}
+
+class ProofDecision(BaseModel):
+    decision: str
+    reason: Optional[str] = None
+
+
+class DisputeDecision(BaseModel):
+    decision: str
+    response: Optional[str] = None
+
 
 @app.post("/api/v1/signalements/{report_id}/preuve-traitement")
 async def soumettre_preuve_traitement(
@@ -1006,6 +1063,8 @@ async def soumettre_preuve_traitement(
     file: UploadFile = File(...),
     lat: float = Form(...),
     lon: float = Form(...),
+    accuracy_m: Optional[float] = Form(None),
+    comment: Optional[str] = Form(None),
     user: dict = Depends(require_agent)
 ):
     conn = get_db_connection()
@@ -1018,38 +1077,26 @@ async def soumettre_preuve_traitement(
         raise HTTPException(400, "Le signalement doit être 'en_cours'")
     if user["role"] == "agent" and report["agent_id"] != user["user_id"]:
         raise HTTPException(403, "Signalement non assigné à cet agent")
+    if accuracy_m is not None and (accuracy_m < 0 or accuracy_m > 10000):
+        raise HTTPException(422, "Précision GPS invalide")
+    if comment is not None and len(comment) > 1000:
+        raise HTTPException(422, "Commentaire trop long")
 
     validate_coordinates(lat, lon)
     image_bytes = await read_validated_image(file)
 
-    severity, confiance = predict_severity(image_bytes)
-
-    if severity in ["faible", "hors_sujet"]:
-        resultat = "valide"
-        nouveau_statut = "traite"
-        message = "Traitement validé par l'IA"
-    else:
-        resultat = "echec"
-        nouveau_statut = "verification_requise"
-        message = "Déchets encore présents selon l'IA. Vérification requise."
-
-    cur.execute("""
-        UPDATE reports SET status = %s,
-               resultat_preuve = %s, confiance_preuve = %s,
-               date_traitement = NOW(), updated_at = NOW()
-        WHERE id = %s RETURNING id, status
-    """, (nouveau_statut, resultat, confiance, report_id))
-    result = cur.fetchone()
     asset_id, _stored = store_media_with_compensation(
         conn,user["user_id"],"report_proof",image_bytes,file.content_type,
         "report",report_id,"active",get_media_storage(),
     )
-    cur.execute("UPDATE reports SET proof_media_asset_id=%s WHERE id=%s",(asset_id,report_id))
+    cur.execute("INSERT INTO report_proofs(report_id,agent_id,media_asset_id,latitude,longitude,accuracy_m,comment) VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id,status",(report_id,user["user_id"],asset_id,lat,lon,accuracy_m,comment));proof=cur.fetchone()
+    cur.execute("UPDATE reports SET status='verification_requise',proof_media_asset_id=%s,date_traitement=NOW(),updated_at=NOW() WHERE id=%s RETURNING id,status",(asset_id,report_id));result=cur.fetchone()
+    cur.execute("INSERT INTO report_transition_history(report_id,actor_id,actor_role,from_status,to_status,reason,decision_data) VALUES (%s,%s,%s,%s,'verification_requise',%s,%s)",(report_id,user["user_id"],user["role"],report["status"],comment,psycopg2.extras.Json({"proof_id":proof["id"]})))
     create_notification(
         conn, report["user_id"], "report_proof_result", "Preuve de traitement",
         "La preuve de traitement de votre signalement a été analysée.",
         f"/citoyen#signalement-{report_id}", "notification.report_proof_result",
-        {"report_id": report_id, "status": nouveau_statut, "result": resultat},
+        {"report_id": report_id, "status": "verification_requise", "proof_id": proof["id"]},
         resource_type="report", resource_id=report_id,
     )
     conn.commit()
@@ -1060,14 +1107,56 @@ async def soumettre_preuve_traitement(
     asyncio.create_task(ws_manager.send_to_user(report["user_id"], {
         "type": "traitement_termine",
         "report_id": report_id,
-        "status": nouveau_statut
+        "status": "verification_requise"
     }))
 
     return {
         "id": result["id"], "status": result["status"],
-        "resultat_preuve": resultat, "severite_predite": severity,
-        "confiance": confiance, "message": message
+        "proof_id": proof["id"], "proof_status": proof["status"],
+        "message": "Preuve soumise pour décision humaine"
     }
+
+
+@app.patch("/api/v1/signalements/{report_id}/preuves/{proof_id}/decision")
+def decide_report_proof(report_id:int,proof_id:int,payload:ProofDecision,user:dict=Depends(require_admin)):
+    if payload.decision not in {"acceptee","refusee","remplacement_demande"}: raise HTTPException(422,"Décision invalide")
+    if payload.decision!="acceptee" and not (payload.reason or "").strip(): raise HTTPException(422,"Motif obligatoire")
+    conn=get_db_connection();cur=conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute("SELECT p.status,r.status AS report_status,r.user_id FROM report_proofs p JOIN reports r ON r.id=p.report_id WHERE p.id=%s AND p.report_id=%s FOR UPDATE",(proof_id,report_id));row=cur.fetchone()
+    if not row: cur.close();conn.close();raise HTTPException(404,"Preuve introuvable")
+    if row["status"] not in {"soumise","en_examen"}: cur.close();conn.close();raise HTTPException(409,"Preuve déjà décidée")
+    target="cloture" if payload.decision=="acceptee" else "en_cours"
+    cur.execute("UPDATE report_proofs SET status=%s,decided_by=%s,decision_reason=%s,decided_at=NOW() WHERE id=%s",(payload.decision,user["user_id"],payload.reason,proof_id))
+    cur.execute("UPDATE reports SET status=%s,updated_at=NOW() WHERE id=%s",(target,report_id))
+    cur.execute("INSERT INTO report_transition_history(report_id,actor_id,actor_role,from_status,to_status,reason,decision_data) VALUES (%s,%s,%s,%s,%s,%s,%s)",(report_id,user["user_id"],user["role"],row["report_status"],target,payload.reason,psycopg2.extras.Json({"proof_id":proof_id,"decision":payload.decision})))
+    cur.execute("INSERT INTO audit_logs(actor_id,actor_role,action,resource_type,resource_id,old_value,new_value,reason) VALUES (%s,%s,'proof_decision','report',%s,%s,%s,%s)",(user["user_id"],user["role"],report_id,psycopg2.extras.Json({"proof_status":row["status"]}),psycopg2.extras.Json({"proof_status":payload.decision,"report_status":target}),payload.reason))
+    create_notification(conn,row["user_id"],"report_proof_decision","Décision sur la preuve","Une décision a été prise sur la preuve de votre signalement.",f"/citoyen#signalement-{report_id}","notification.report_proof_decision",{"report_id":report_id,"decision":payload.decision,"status":target},resource_type="report",resource_id=report_id)
+    conn.commit();cur.close();conn.close();return {"proof_id":proof_id,"proof_status":payload.decision,"report_status":target}
+
+
+@app.post("/api/v1/signalements/{report_id}/contester")
+async def dispute_report(report_id:int,reason:str=Form(...),comment:str=Form(...),file:Optional[UploadFile]=File(None),user:dict=Depends(require_auth)):
+    if user.get("role") != "citoyen": raise HTTPException(403,"Réservé aux citoyens")
+    if not reason.strip() or len(reason)>64 or not comment.strip() or len(comment)>2000: raise HTTPException(422,"Contestation invalide")
+    conn=get_db_connection();cur=conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor);cur.execute("SELECT status,user_id,updated_at FROM reports WHERE id=%s FOR UPDATE",(report_id,));report=cur.fetchone()
+    if not report or report["user_id"]!=user["user_id"]: cur.close();conn.close();raise HTTPException(404,"Signalement introuvable")
+    hours=int(os.getenv("REPORT_DISPUTE_HOURS","72"))
+    if report["status"]!="cloture" or report["updated_at"] < datetime.now(report["updated_at"].tzinfo)-timedelta(hours=hours): cur.close();conn.close();raise HTTPException(409,"Fenêtre de contestation fermée")
+    cur.execute("SELECT COUNT(*) AS dispute_count FROM report_disputes WHERE report_id=%s AND citizen_id=%s AND created_at>NOW()-INTERVAL '30 days'",(report_id,user["user_id"]));
+    if cur.fetchone()["dispute_count"]>=3: cur.close();conn.close();raise HTTPException(429,"Trop de contestations récentes")
+    asset_id=None
+    if file:
+        content=await read_validated_image(file);asset_id,_=store_media_with_compensation(conn,user["user_id"],"dispute_photo",content,file.content_type,"report",report_id,"active",get_media_storage())
+    cur.execute("INSERT INTO report_disputes(report_id,citizen_id,reason,comment,media_asset_id) VALUES (%s,%s,%s,%s,%s) RETURNING id",(report_id,user["user_id"],reason,comment,asset_id));dispute_id=cur.fetchone()["id"]
+    cur.execute("UPDATE reports SET status='reouvert',updated_at=NOW() WHERE id=%s",(report_id,));cur.execute("INSERT INTO report_transition_history(report_id,actor_id,actor_role,from_status,to_status,reason) VALUES (%s,%s,%s,'cloture','reouvert',%s)",(report_id,user["user_id"],user["role"],reason));cur.execute("INSERT INTO audit_logs(actor_id,actor_role,action,resource_type,resource_id,new_value,reason) VALUES (%s,%s,'report_disputed','report',%s,%s,%s)",(user["user_id"],user["role"],report_id,psycopg2.extras.Json({"dispute_id":dispute_id}),reason));conn.commit();cur.close();conn.close();return {"id":dispute_id,"report_status":"reouvert","status":"soumise"}
+
+
+@app.patch("/api/v1/signalements/{report_id}/contestations/{dispute_id}")
+def decide_report_dispute(report_id:int,dispute_id:int,payload:DisputeDecision,user:dict=Depends(require_admin)):
+    if payload.decision not in {"confirmee","reouverte","cloturee"}: raise HTTPException(422,"Décision invalide")
+    conn=get_db_connection();cur=conn.cursor();cur.execute("UPDATE report_disputes SET status=%s,resolved_at=CASE WHEN %s IN ('confirmee','cloturee') THEN NOW() ELSE NULL END WHERE id=%s AND report_id=%s AND status IN ('soumise','en_examen') RETURNING citizen_id",(payload.decision,payload.decision,dispute_id,report_id));row=cur.fetchone()
+    if not row: cur.close();conn.close();raise HTTPException(404,"Contestation introuvable")
+    report_status="cloture" if payload.decision in {"confirmee","cloturee"} else "reouvert";cur.execute("UPDATE reports SET status=%s,updated_at=NOW() WHERE id=%s",(report_status,report_id));cur.execute("INSERT INTO audit_logs(actor_id,actor_role,action,resource_type,resource_id,new_value,reason) VALUES (%s,%s,'dispute_decision','report',%s,%s,%s)",(user["user_id"],user["role"],report_id,psycopg2.extras.Json({"dispute_id":dispute_id,"decision":payload.decision}),payload.response));create_notification(conn,row[0],"report_dispute_decision","Contestation mise à jour","Une décision a été prise sur votre contestation.",f"/citoyen#signalement-{report_id}","notification.report_dispute_decision",{"report_id":report_id,"status":payload.decision},resource_type="report",resource_id=report_id);conn.commit();cur.close();conn.close();return {"id":dispute_id,"status":payload.decision,"report_status":report_status}
 
 @app.get("/api/v1/signalements")
 def get_signalements(
@@ -2103,24 +2192,29 @@ def get_suivi(report_id: int, user: dict = Depends(require_auth)):
 def assigner_agent(
     report_id: int,
     agent_id: int,
+    reason: Optional[str] = None,
     user: dict = Depends(require_admin)
 ):
     """Le gestionnaire assigne un agent à un signalement validé."""
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("""
-        UPDATE reports
-        SET agent_id = %s, status = 'en_cours', updated_at = NOW()
-        WHERE id = %s AND status = 'valide'
-        RETURNING id
-    """, (agent_id, report_id))
-    if not cur.fetchone():
-        conn.close()
-        raise HTTPException(400, "Signalement non valide ou déjà assigné")
+    cur.execute("SELECT r.status,r.agent_id,r.user_id,u.arrondissement FROM reports r LEFT JOIN users u ON u.id=r.user_id WHERE r.id=%s FOR UPDATE OF r",(report_id,));report=cur.fetchone()
+    if not report or report[0] not in {"valide","reouvert","assigne"}: cur.close();conn.close();raise HTTPException(409,"Signalement non affectable")
+    if report[1] and report[1]!=agent_id and not (reason or "").strip(): cur.close();conn.close();raise HTTPException(422,"Motif de réaffectation obligatoire")
+    cur.execute("SELECT id,service_area FROM users WHERE id=%s AND role='agent' AND active=TRUE",(agent_id,));agent=cur.fetchone()
+    if not agent: cur.close();conn.close();raise HTTPException(404,"Agent actif introuvable")
+    if agent[1] and report[3] and agent[1]!=report[3]: cur.close();conn.close();raise HTTPException(409,"Agent hors zone")
+    action="reassigned" if report[1] and report[1]!=agent_id else "assigned"
+    cur.execute("UPDATE reports SET agent_id=%s,status='assigne',updated_at=NOW() WHERE id=%s",(agent_id,report_id))
+    cur.execute("INSERT INTO assignment_history(resource_type,resource_id,assignee_id,actor_id,action,reason) VALUES ('report',%s,%s,%s,%s,%s)",(report_id,agent_id,user["user_id"],action,reason))
+    cur.execute("INSERT INTO report_transition_history(report_id,actor_id,actor_role,from_status,to_status,reason) VALUES (%s,%s,%s,%s,'assigne',%s)",(report_id,user["user_id"],user["role"],report[0],reason))
+    cur.execute("INSERT INTO audit_logs(actor_id,actor_role,action,resource_type,resource_id,old_value,new_value,reason) VALUES (%s,%s,%s,'report',%s,%s,%s,%s)",(user["user_id"],user["role"],action,report_id,psycopg2.extras.Json({"agent_id":report[1]}),psycopg2.extras.Json({"agent_id":agent_id}),reason))
+    create_notification(conn,agent_id,"report_assigned","Signalement affecté","Un signalement vous a été affecté.",f"/agent#signalement-{report_id}","notification.report_assigned",{"report_id":report_id},resource_type="report",resource_id=report_id)
+    create_notification(conn,report[2],"report_assigned","Agent affecté","Un agent a été affecté à votre signalement.",f"/citoyen#signalement-{report_id}","notification.report_assigned",{"report_id":report_id},resource_type="report",resource_id=report_id)
     conn.commit()
     cur.close()
     conn.close()
-    return {"message": "Agent assigné"}
+    return {"message": "Agent assigné", "status":"assigne"}
 
 # ========== ABONNEMENTS (collecte régulière) ==========
 
