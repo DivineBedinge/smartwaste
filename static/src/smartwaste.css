@@ -1,0 +1,41 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root { color-scheme: light; --sw-safe-bottom: env(safe-area-inset-bottom, 0px); }
+  :root.dark { color-scheme: dark; }
+  html { @apply scroll-smooth antialiased; }
+  body { @apply bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100; padding-bottom: calc(6rem + var(--sw-safe-bottom)); }
+  button, a, input, select, textarea { @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-smart-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950; }
+  button, [role="button"] { touch-action: manipulation; }
+}
+
+@layer components {
+  .sw-card { @apply rounded-sw border border-slate-200/80 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900; }
+  .sw-btn { @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-smart-600 px-4 py-2 font-semibold text-white transition duration-200 ease-sw hover:bg-smart-700 disabled:cursor-not-allowed disabled:opacity-50; }
+  .sw-field { @apply min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white; }
+  .sw-badge { @apply inline-flex rounded-full bg-smart-100 px-2.5 py-1 text-xs font-bold text-smart-700 dark:bg-smart-950 dark:text-smart-100; }
+  .sw-glass { background:rgba(255,255,255,.82); border:1px solid rgba(148,163,184,.35); box-shadow:0 18px 55px rgba(5,46,43,.16); }
+  .dark .sw-glass { background:rgba(15,23,42,.86); border-color:rgba(71,85,105,.65); }
+  @supports (backdrop-filter: blur(16px)) { .sw-glass { backdrop-filter:blur(16px) saturate(145%); } }
+}
+
+.sw-bottom-nav { position:fixed; z-index:9995; left:50%; bottom:calc(.65rem + var(--sw-safe-bottom)); transform:translateX(-50%); width:min(calc(100% - 1rem),42rem); display:grid; grid-template-columns:repeat(5,1fr); padding:.35rem; border-radius:1.45rem; }
+.sw-nav-item { min-height:48px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:.1rem; border-radius:1rem; color:#475569; font-size:.7rem; font-weight:650; }
+.dark .sw-nav-item { color:#cbd5e1; }
+.sw-nav-item[aria-current="page"] { color:#047857; background:#d1fae5; }
+.sw-nav-item--primary { color:white!important; background:#059669; transform:translateY(-.45rem); box-shadow:0 8px 22px rgba(5,150,105,.32); }
+.sw-mascot-button { position:fixed; z-index:9997; right:1rem; bottom:calc(6.4rem + var(--sw-safe-bottom)); width:58px; height:58px; border-radius:50%; background:#fff; box-shadow:0 12px 32px rgba(5,46,43,.24); border:2px solid #a7f3d0; padding:.35rem; }
+.sw-mascot-button[data-side="left"] { right:auto; left:1rem; }
+.sw-assistant { position:fixed; z-index:9999; inset:auto .75rem calc(6.2rem + var(--sw-safe-bottom)) .75rem; max-height:min(72vh,42rem); overflow:auto; border-radius:1.5rem; padding:1rem; transform:translateY(1rem); opacity:0; pointer-events:none; transition:.22s cubic-bezier(.22,1,.36,1); }
+.sw-assistant[data-open="true"] { transform:none; opacity:1; pointer-events:auto; }
+.sw-assistant-log { display:flex; flex-direction:column; gap:.6rem; min-height:8rem; max-height:18rem; overflow:auto; margin:.75rem 0; }
+.sw-assistant-message { max-width:90%; border-radius:1rem; padding:.65rem .8rem; background:#e2e8f0; color:#172033; }
+.sw-assistant-message[data-author="user"] { align-self:flex-end; background:#059669; color:white; }
+.sw-skeleton { border-radius:.8rem; background:linear-gradient(90deg,#e2e8f0 25%,#f8fafc 50%,#e2e8f0 75%); background-size:200% 100%; animation:sw-shimmer 1.4s infinite; }
+#sw-common-map { bottom:calc(6.2rem + var(--sw-safe-bottom))!important; }
+@keyframes sw-shimmer { to { background-position:-200% 0; } }
+@media (min-width:768px) { .sw-assistant { inset:1rem 1rem 1rem auto; width:25rem; max-height:none; } }
+@media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important; animation-duration:.01ms!important; animation-iteration-count:1!important; transition-duration:.01ms!important; } .sw-nav-item--primary { transform:none; } }
+@media (prefers-contrast:more) { .sw-glass { border:2px solid currentColor; backdrop-filter:none; } }

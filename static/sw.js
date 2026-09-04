@@ -1,6 +1,6 @@
-const CACHE_NAME = 'smartwaste-v4';
+const CACHE_NAME = 'smartwaste-v5';
 const CACHE_PREFIX = 'smartwaste-';
-const STATIC_URLS = ['/', '/citoyen', '/static/citoyen.html', '/static/offline.js', '/static/i18n.js', '/static/map-common.js', '/static/manifest.webmanifest'];
+const STATIC_URLS = ['/', '/citoyen', '/static/citoyen.html', '/static/offline.js', '/static/i18n.js', '/static/map-common.js', '/static/ui-shell.js', '/static/smartwaste.css', '/static/mascot-recycleur.svg', '/static/manifest.webmanifest'];
 
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(STATIC_URLS)));

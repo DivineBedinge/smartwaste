@@ -1,0 +1,11 @@
+{
+  "name": "smartwaste-pwa",
+  "private": true,
+  "scripts": {
+    "build:css": "tailwindcss -c tailwind.config.js -i static/src/smartwaste.css -o static/smartwaste.css --minify",
+    "check:js": "node --check static/ui-shell.js && node --check static/map-common.js && node --check static/offline.js && node --check static/sw.js"
+  },
+  "devDependencies": {
+    "tailwindcss": "3.4.17"
+  }
+}

@@ -9,6 +9,7 @@ ragas_env/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+node_modules/
 
 # Local caches and downloaded/generated data
 cache/

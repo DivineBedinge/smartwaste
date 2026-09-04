@@ -5,7 +5,12 @@
   "start_url": "/citoyen",
   "scope": "/",
   "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "any",
   "background_color": "#f8fafc",
   "theme_color": "#059669",
-  "icons": []
+  "categories": ["utilities", "navigation"],
+  "icons": [
+    {"src":"/static/mascot-recycleur.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}
+  ]
 }
