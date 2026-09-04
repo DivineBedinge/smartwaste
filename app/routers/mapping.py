@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from psycopg2.extras import Json, RealDictCursor
 
 from app.services.geo import validate_bbox, validate_coordinate
+from app.services.geo_assistant import identify_intent, response
 from app.services.notifications import create_notification
 from app.services.routing import RoutingUnavailable, get_routing_provider
 from core.policy import is_manager_role
@@ -41,6 +42,11 @@ class IncidentCreate(BaseModel):
 class ZoneCreate(BaseModel):
     name:str=Field(min_length=2,max_length=120);zone_type:str=Field(default="operational",max_length=40)
     arrondissement:Optional[str]=Field(default=None,max_length=120);geometry:dict;reason:str=Field(min_length=2,max_length=1000)
+
+class AssistantRequest(BaseModel):
+    query:str=Field(default="",max_length=500);intent:Optional[str]=Field(default=None,max_length=64)
+    resource_id:Optional[int]=Field(default=None,gt=0);zone_id:Optional[int]=Field(default=None,gt=0)
+    lat:Optional[float]=Field(default=None,ge=-90,le=90);lon:Optional[float]=Field(default=None,ge=-180,le=180)
 
 def _polygon(value:dict)->str:
     if value.get("type") != "Polygon":raise HTTPException(422,"Polygone GeoJSON obligatoire")
@@ -206,3 +212,61 @@ def citizen_collection_progress(occurrence_id:int,user=Depends(current_user)):
     if not row:raise HTTPException(404,"Collecte introuvable")
     if row["status"] not in {"en_route","arrivee"}:row["lat"]=row["lon"]=row["recorded_at"]=None;row["fresh"]=False
     return row
+
+@router.post("/assistant")
+def geographic_assistant(payload:AssistantRequest,user=Depends(current_user)):
+    try:intent=identify_intent(payload.query,user["role"],payload.intent)
+    except LookupError as exc:return response(user.get("language","fr"),str(exc),"Please clarify your geographic request.",needs_clarification=True)
+    except ValueError as exc:raise HTTPException(422,str(exc)) from exc
+    except PermissionError as exc:raise HTTPException(403,str(exc)) from exc
+    language=user.get("language","fr");conn=get_db_connection();cur=conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        if intent=="report_status":
+            if payload.resource_id:cur.execute("SELECT id,status FROM reports WHERE id=%s AND user_id=%s",(payload.resource_id,user["user_id"]))
+            else:cur.execute("SELECT id,status FROM reports WHERE user_id=%s ORDER BY updated_at DESC LIMIT 2",(user["user_id"],))
+            rows=cur.fetchall()
+            if not rows:return response(language,"Aucun signalement autorisé trouvé.","No authorized report was found.")
+            if len(rows)>1:return response(language,"Plusieurs signalements correspondent. Précisez leur identifiant.","Several reports match. Specify an ID.",needs_clarification=True)
+            row=rows[0];return response(language,f"Le signalement #{row['id']} est {row['status']}.",f"Report #{row['id']} is {row['status']}.",facts={"report_id":row["id"],"status":row["status"]},link=f"/citoyen#signalement-{row['id']}")
+        if intent in {"next_collection","collection_state"}:
+            owner="s.user_id=%s" if user["role"]=="citoyen" else "o.collector_id=%s"
+            cur.execute(f"SELECT o.id,o.status,o.scheduled_for FROM collection_occurrences o JOIN domestic_subscriptions s ON s.id=o.subscription_id WHERE {owner} AND o.status NOT IN ('annulee','confirmee','refusee') ORDER BY o.scheduled_for LIMIT 1",(user["user_id"],));row=cur.fetchone()
+            if not row:return response(language,"Aucune prochaine collecte disponible.","No upcoming collection is available.")
+            return response(language,f"La prochaine collecte #{row['id']} est {row['status']}.",f"Next collection #{row['id']} is {row['status']}.",facts={"collection_id":row["id"],"status":row["status"],"scheduled_for":row["scheduled_for"]},link=f"/{user['role']}#collecte-{row['id']}")
+        if intent=="nearby_drop_points":
+            if payload.lat is None or payload.lon is None:return response(language,"Indiquez une position pour rechercher les points publics.","Provide a position to find public drop points.",needs_clarification=True)
+            validate_coordinate(payload.lat,payload.lon);cur.execute("SELECT id,nom,ROUND(ST_Distance(geometry::geography,ST_SetSRID(ST_MakePoint(%s,%s),4326)::geography)) distance_m FROM points_collecte WHERE geometry IS NOT NULL AND ST_DWithin(geometry::geography,ST_SetSRID(ST_MakePoint(%s,%s),4326)::geography,10000) ORDER BY distance_m LIMIT 5",(payload.lon,payload.lat,payload.lon,payload.lat));rows=cur.fetchall();return response(language,f"{len(rows)} point(s) public(s) proche(s) trouvé(s).",f"{len(rows)} nearby public drop point(s) found.",facts={"points":rows})
+        if intent in {"assigned_interventions","interventions_in_zone","nearest_intervention"}:
+            params=[user["user_id"]];distance=""
+            if intent=="nearest_intervention":
+                if payload.lat is None or payload.lon is None:return response(language,"Indiquez votre position autorisée.","Provide your authorized position.",needs_clarification=True)
+                validate_coordinate(payload.lat,payload.lon);distance=",ROUND(ST_Distance(geometry::geography,ST_SetSRID(ST_MakePoint(%s,%s),4326)::geography)) distance_m";params=[payload.lon,payload.lat,user["user_id"]]
+            cur.execute(f"SELECT id,status,severity{distance} FROM reports WHERE agent_id=%s AND status IN ('assigne','en_route','en_cours','verification_requise') ORDER BY {'distance_m,' if distance else ''} updated_at DESC LIMIT 20",params);rows=cur.fetchall();return response(language,f"{len(rows)} intervention(s) autorisée(s).",f"{len(rows)} authorized intervention(s).",facts={"interventions":rows})
+        if intent in {"remaining_stops","show_route"}:
+            cur.execute("SELECT id,routing_status,distance_m,duration_s FROM tours WHERE collector_id=%s AND status IN ('planifiee','en_cours') ORDER BY planned_date,id LIMIT 1",(user["user_id"],));tour=cur.fetchone()
+            if not tour:return response(language,"Aucune tournée active.","No active tour.")
+            cur.execute("SELECT COUNT(*) remaining FROM tour_stops WHERE tour_id=%s AND status IN ('pending','current')",(tour["id"],));remaining=cur.fetchone()["remaining"]
+            facts={"tour_id":tour["id"],"remaining":remaining,"routing_status":tour["routing_status"],"distance_m":tour["distance_m"],"duration_s":tour["duration_s"]};return response(language,f"La tournée #{tour['id']} contient {remaining} arrêt(s) restant(s).",f"Tour #{tour['id']} has {remaining} remaining stop(s).",facts=facts,link=f"/ramasseur#tour-{tour['id']}")
+        if intent=="report_incident":
+            cur.execute("SELECT id FROM tours WHERE collector_id=%s AND status='en_cours' ORDER BY started_at DESC LIMIT 1",(user["user_id"],));tour=cur.fetchone()
+            if not tour:return response(language,"Aucune tournée active pour signaler un incident.","No active tour for reporting an incident.")
+            return response(language,"Ouvrez le formulaire d’incident de votre tournée active.","Open the incident form for your active tour.",facts={"tour_id":tour["id"]},link=f"/ramasseur#tour-{tour['id']}")
+        if intent=="open_resource":
+            if not payload.resource_id:return response(language,"Précisez l’identifiant de la ressource.","Specify the resource ID.",needs_clarification=True)
+            if user["role"]=="citoyen":cur.execute("SELECT id FROM reports WHERE id=%s AND user_id=%s",(payload.resource_id,user["user_id"]));prefix="citoyen#signalement"
+            elif user["role"]=="agent":cur.execute("SELECT id FROM reports WHERE id=%s AND agent_id=%s",(payload.resource_id,user["user_id"]));prefix="agent#signalement"
+            else:cur.execute("SELECT id FROM tours WHERE id=%s AND collector_id=%s",(payload.resource_id,user["user_id"]));prefix="ramasseur#tour"
+            row=cur.fetchone()
+            if not row:raise HTTPException(404,"Ressource autorisée introuvable")
+            return response(language,"Ressource autorisée disponible.","Authorized resource available.",facts={"resource_id":row["id"]},link=f"/{prefix}-{row['id']}")
+        if intent=="unassigned_collections":
+            cur.execute("SELECT COUNT(*) count FROM collection_occurrences WHERE collector_id IS NULL AND status IN ('programmee','reprogrammee','refusee')");count=cur.fetchone()["count"]
+        elif intent=="late_tours":cur.execute("SELECT COUNT(*) count FROM tours WHERE status='en_cours' AND planned_date<CURRENT_DATE");count=cur.fetchone()["count"]
+        elif intent=="open_incidents":cur.execute("SELECT COUNT(*) count FROM tour_incidents WHERE status='open'");count=cur.fetchone()["count"]
+        elif intent=="reports_in_zone":
+            if not payload.zone_id:return response(language,"Précisez une zone.","Specify a zone.",needs_clarification=True)
+            cur.execute("SELECT COUNT(*) count FROM reports r JOIN zones z ON z.id=%s AND ST_Covers(z.geometry,r.geometry) WHERE z.active=TRUE",(payload.zone_id,));count=cur.fetchone()["count"]
+        elif intent=="resources_requiring_action":cur.execute("SELECT COUNT(*) count FROM reports WHERE status IN ('a_verifier','en_attente_validation','verification_requise','reouvert')");count=cur.fetchone()["count"]
+        else:raise HTTPException(422,"Intention non prise en charge")
+        cur.execute("INSERT INTO audit_logs(actor_id,actor_role,action,resource_type,new_value) VALUES (%s,%s,'geo_assistant_sensitive_query','assistant',%s)",(user["user_id"],user["role"],Json({"intent":intent,"result_count":count})));conn.commit();return response(language,f"Résultat autorisé : {count}.",f"Authorized result: {count}.",facts={"intent":intent,"count":count})
+    finally:cur.close();conn.close()

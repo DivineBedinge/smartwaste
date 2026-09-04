@@ -244,3 +244,13 @@ def test_role_scoped_map_and_operational_tour(api, monkeypatch):
     position={"lat":4.05,"lon":9.70,"accuracy_m":10}
     assert client.post(f"/api/v1/geo/tours/{tour_id}/position",json=position,headers=bearer(users["ramasseur"])).status_code==202
     assert client.post(f"/api/v1/geo/tours/{tour_id}/position",json=position,headers=bearer(users["ramasseur"])).status_code==429
+
+
+def test_geographic_assistant_is_controlled_for_all_roles(api):
+    client,users=api
+    for role,intent in (("citoyen","next_collection"),("agent","assigned_interventions"),("ramasseur","next_collection"),("admin","unassigned_collections")):
+        response=client.post("/api/v1/geo/assistant",json={"intent":intent},headers=bearer(users[role]))
+        assert response.status_code==200 and response.json()["source"]=="authorized_server_data"
+    assert client.post("/api/v1/geo/assistant",json={"query":"SELECT * FROM users"},headers=bearer(users["admin"])).status_code==422
+    assert client.post("/api/v1/geo/assistant",json={"intent":"late_tours"},headers=bearer(users["citoyen"])).status_code==403
+    assert client.post("/api/v1/geo/assistant",json={"intent":"open_resource","resource_id":999999},headers=bearer(users["citoyen"])).status_code==404

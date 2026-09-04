@@ -157,3 +157,17 @@ def test_operational_workflow_schema_and_constraints(pg_connection):
             assert status in definitions
         cursor.execute("SELECT indexdef FROM pg_indexes WHERE indexname='uq_collection_occurrence_schedule'")
         assert "unique" in cursor.fetchone()[0].lower()
+
+
+def test_advanced_mapping_postgis_contract(pg_connection):
+    with pg_connection.cursor() as cursor:
+        for table in ("tour_stops","route_versions","operational_positions","tour_incidents"):
+            cursor.execute("SELECT to_regclass(%s)",(table,))
+            assert cursor.fetchone()[0] == table
+        for table,column in (("tour_stops","geometry"),("operational_positions","geometry"),("tours","route_geometry")):
+            cursor.execute("SELECT Find_SRID('public',%s,%s)",(table,column))
+            assert cursor.fetchone()[0] == 4326
+        cursor.execute("SELECT indexdef FROM pg_indexes WHERE indexname='idx_operational_positions_geometry'")
+        assert "gist" in cursor.fetchone()[0].lower()
+        cursor.execute("SELECT ST_DWithin(ST_SetSRID(ST_MakePoint(9.70,4.05),4326)::geography,ST_SetSRID(ST_MakePoint(9.701,4.05),4326)::geography,200)")
+        assert cursor.fetchone()[0] is True
