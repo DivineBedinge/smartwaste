@@ -42,6 +42,7 @@ from session_manager import session_manager
 from app.router import chatbot_cache_key, detect_simple_intent, is_faq_question, simple_chat_response
 from route_optimizer import get_graph, calculer_matrice_distances, resoudre_vrp
 from app.routers.workflows import router as workflows_router
+from app.routers.communications import router as communications_router
 from app.services.uploads import read_validated_image
 from app.services.routing import get_route
 from app.services.notifications import create_notification
@@ -138,6 +139,7 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.include_router(auth_router)
 app.include_router(workflows_router)
+app.include_router(communications_router)
 
 # Sécurité
 security = HTTPBearer()
@@ -832,7 +834,7 @@ def update_signalement_status(
         raise HTTPException(422, "Un motif est obligatoire pour cette transition")
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    cur.execute("SELECT status FROM reports WHERE id = %s", (report_id,))
+    cur.execute("SELECT status, user_id FROM reports WHERE id = %s", (report_id,))
     report = cur.fetchone()
     if not report:
         cur.close()
@@ -856,6 +858,14 @@ def update_signalement_status(
         user["user_id"], user["role"], report_id,
         {"status": report["status"]}, {"status": payload.status}, payload.reason,
     ))
+    if report.get("user_id"):
+        create_notification(
+            conn, report["user_id"], "report_status_changed", "Signalement mis à jour",
+            "Le statut de votre signalement a changé.",
+            f"/citoyen#signalement-{report_id}", "notification.report_status_changed",
+            {"report_id": report_id, "status": payload.status},
+            resource_type="report", resource_id=report_id,
+        )
     conn.commit()
     cur.close()
     conn.close()
@@ -965,6 +975,13 @@ async def soumettre_preuve_traitement(
         WHERE id = %s RETURNING id, status
     """, (nouveau_statut, photo_preuve_base64, resultat, confiance, report_id))
     result = cur.fetchone()
+    create_notification(
+        conn, report["user_id"], "report_proof_result", "Preuve de traitement",
+        "La preuve de traitement de votre signalement a été analysée.",
+        f"/citoyen#signalement-{report_id}", "notification.report_proof_result",
+        {"report_id": report_id, "status": nouveau_statut, "result": resultat},
+        resource_type="report", resource_id=report_id,
+    )
     conn.commit()
     cur.close()
     conn.close()

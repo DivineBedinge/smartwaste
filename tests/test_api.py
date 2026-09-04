@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 import auth
 import main
+from app.routers import communications, workflows
 from core.security import create_access_token, hash_password
 from database import require_test_database_url
 
@@ -32,6 +33,8 @@ def api(monkeypatch):
     wrapped = TransactionConnection(connection)
     monkeypatch.setattr(main, "get_db_connection", lambda: wrapped)
     monkeypatch.setattr(auth, "get_db_connection", lambda: wrapped)
+    monkeypatch.setattr(communications, "get_db_connection", lambda: wrapped)
+    monkeypatch.setattr(workflows, "get_db_connection", lambda: wrapped)
     monkeypatch.setattr(main, "predict_severity", lambda _: ("faible", 0.99))
     monkeypatch.setattr(main, "predict_type", lambda _: ("plastic", 0.98))
     users = {}
@@ -89,3 +92,65 @@ def test_create_report_is_idempotent_without_ai_or_network(api):
 def test_citizen_cannot_access_manager_reports(api):
     client, users = api
     assert client.get("/api/v1/signalements", headers=bearer(users["citoyen"])).status_code == 403
+
+
+def test_contextual_communication_is_idempotent_private_and_closable(api):
+    client, users = api
+    image = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
+    report = client.post(
+        "/api/v1/signalements",
+        files={"file": ("test.png", image, "image/png")},
+        data={"lat": "4.0511", "lon": "9.7069", "client_id": str(uuid4())},
+        headers=bearer(users["citoyen"]),
+    )
+    assert report.status_code == 200
+    conversation = client.post(
+        "/api/v1/conversations",
+        json={"resource_type": "report", "resource_id": report.json()["id"]},
+        headers=bearer(users["citoyen"]),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+    client_id = str(uuid4())
+    first = client.post(
+        f"/api/v1/conversations/{conversation_id}/messages",
+        data={"client_id": client_id, "body": "Bonjour <script>alert(1)</script>"},
+        headers=bearer(users["citoyen"]),
+    )
+    duplicate = client.post(
+        f"/api/v1/conversations/{conversation_id}/messages",
+        data={"client_id": client_id, "body": "Bonjour <script>alert(1)</script>"},
+        headers=bearer(users["citoyen"]),
+    )
+    assert first.status_code == duplicate.status_code == 200
+    assert first.json()["id"] == duplicate.json()["id"]
+    listed = client.get("/api/v1/conversations", headers=bearer(users["admin"]))
+    assert listed.status_code == 200
+    assert any(row["id"] == conversation_id for row in listed.json())
+    assert client.get("/api/v1/conversations", headers=bearer(users["ramasseur"])).json() == []
+    assert client.patch(f"/api/v1/conversations/{conversation_id}/close", headers=bearer(users["admin"])).status_code == 200
+    closed = client.post(
+        f"/api/v1/conversations/{conversation_id}/messages",
+        data={"client_id": str(uuid4()), "body": "Après clôture"},
+        headers=bearer(users["citoyen"]),
+    )
+    assert closed.status_code == 409
+
+
+def test_support_and_callback_are_available_to_citizen(api):
+    client, users = api
+    support = client.post(
+        "/api/v1/demandes-support",
+        json={"category": "suggestion", "subject": "Amélioration", "description": "Ajouter un bac", "resource_type": "general"},
+        headers=bearer(users["citoyen"]),
+    )
+    assert support.status_code == 200
+    callback = client.post(
+        "/api/v1/callback-requests",
+        json={"reason": "Besoin d'aide"},
+        headers=bearer(users["citoyen"]),
+    )
+    assert callback.status_code == 200
+    manager_notifications = client.get("/api/v1/notifications?limit=10&unread=true", headers=bearer(users["admin"]))
+    assert manager_notifications.status_code == 200
+    assert {row["notification_type"] for row in manager_notifications.json()} >= {"support_received", "callback_requested"}

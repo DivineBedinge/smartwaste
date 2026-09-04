@@ -192,17 +192,20 @@ CREATE TABLE IF NOT EXISTS support_requests (
     id SERIAL PRIMARY KEY,
     author_id INTEGER NOT NULL REFERENCES users(id),
     author_role VARCHAR(32) NOT NULL,
-    category VARCHAR(64) NOT NULL,
+    category VARCHAR(64) NOT NULL CHECK (category IN ('collecte_manquee','comportement','erreur_affectation','adresse_inaccessible','danger','panne','preuve_contestee','probleme_technique','suggestion','autre')),
     subject VARCHAR(200) NOT NULL,
     description TEXT NOT NULL,
     attachment_url TEXT,
+    resource_type VARCHAR(32),
+    resource_id INTEGER,
     priority VARCHAR(16) NOT NULL DEFAULT 'normal' CHECK (priority IN ('basse', 'normal', 'haute', 'critique')),
     status VARCHAR(32) NOT NULL DEFAULT 'ouverte'
-        CHECK (status IN ('ouverte', 'en_examen', 'resolue', 'rejetee', 'fermee', 'contestee', 'remise_en_examen')),
+        CHECK (status IN ('ouverte', 'en_examen', 'resolue', 'rejetee', 'fermee', 'contestee', 'remise_en_examen', 'soumise', 'reponse_envoyee', 'rouverte', 'cloturee')),
     assigned_to INTEGER REFERENCES users(id),
     manager_response TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    ,closed_at TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS notifications (
@@ -215,7 +218,50 @@ CREATE TABLE IF NOT EXISTS notifications (
     translation_params JSONB DEFAULT '{}'::JSONB,
     link VARCHAR(2048),
     is_read BOOLEAN NOT NULL DEFAULT FALSE,
+    read_at TIMESTAMPTZ,
+    resource_type VARCHAR(32),
+    resource_id INTEGER,
+    idempotency_key UUID,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_notifications_recipient_idempotency
+    ON notifications(recipient_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS conversations (
+    id BIGSERIAL PRIMARY KEY, resource_type VARCHAR(32) NOT NULL CHECK (resource_type IN ('report','collection','tour','support')),
+    resource_id INTEGER NOT NULL, created_by INTEGER NOT NULL REFERENCES users(id),
+    status VARCHAR(16) NOT NULL DEFAULT 'open' CHECK (status IN ('open','closed')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), closed_at TIMESTAMPTZ, UNIQUE(resource_type,resource_id)
+);
+CREATE TABLE IF NOT EXISTS conversation_participants (
+    conversation_id BIGINT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id), joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY(conversation_id,user_id)
+);
+CREATE TABLE IF NOT EXISTS messages (
+    id BIGSERIAL PRIMARY KEY, conversation_id BIGINT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    sender_id INTEGER REFERENCES users(id), client_id UUID NOT NULL,
+    message_type VARCHAR(16) NOT NULL DEFAULT 'text' CHECK (message_type IN ('text','image','system')),
+    body TEXT, attachment_base64 TEXT, attachment_mime VARCHAR(32), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (body IS NOT NULL OR attachment_base64 IS NOT NULL), UNIQUE(conversation_id,client_id)
+);
+CREATE TABLE IF NOT EXISTS conversation_reads (
+    conversation_id BIGINT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id), last_read_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY(conversation_id,user_id),
+    FOREIGN KEY(conversation_id,user_id) REFERENCES conversation_participants(conversation_id,user_id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS message_reports (
+    id BIGSERIAL PRIMARY KEY, message_id BIGINT NOT NULL REFERENCES messages(id), reporter_id INTEGER NOT NULL REFERENCES users(id),
+    reason VARCHAR(500) NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE(message_id,reporter_id)
+);
+CREATE TABLE IF NOT EXISTS callback_requests (
+    id BIGSERIAL PRIMARY KEY, requester_id INTEGER NOT NULL REFERENCES users(id),
+    resource_type VARCHAR(32) CHECK (resource_type IN ('report','collection','tour','support')), resource_id INTEGER,
+    preferred_at TIMESTAMPTZ, reason VARCHAR(500) NOT NULL,
+    status VARCHAR(24) NOT NULL DEFAULT 'requested' CHECK (status IN ('requested','scheduled','completed','cancelled')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK ((resource_type IS NULL) = (resource_id IS NULL))
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_role_active ON users(role, active);

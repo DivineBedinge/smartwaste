@@ -4,6 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
+from psycopg2.extras import Json
 
 from core.policy import COLLECTION_TRANSITIONS, can_transition, is_manager_role
 from app.services.collections import generate_database_occurrences
@@ -61,6 +62,8 @@ class SupportRequestCreate(BaseModel):
     description: str = Field(min_length=2, max_length=10000)
     priority: str = "normal"
     attachment_url: Optional[str] = Field(default=None, max_length=2048)
+    resource_type: Optional[str] = None
+    resource_id: Optional[int] = Field(default=None, ge=1)
 
 
 class CollectionStatusUpdate(BaseModel):
@@ -96,6 +99,42 @@ class SupportResponseUpdate(BaseModel):
     response: str = Field(min_length=1, max_length=10000)
 
 
+class SupportStatusUpdate(BaseModel):
+    status: str
+
+
+SUPPORT_CATEGORIES = {"collecte_manquee", "comportement", "erreur_affectation", "adresse_inaccessible", "danger", "panne", "preuve_contestee", "probleme_technique", "suggestion", "autre"}
+SUPPORT_STATUSES = {"soumise", "en_examen", "reponse_envoyee", "resolue", "rouverte", "cloturee"}
+RESOURCE_TYPES = {"report", "tour", "collection", "subscription", "conversation", "general"}
+
+
+def validate_support_resource(cur, resource_type, resource_id, user):
+    if resource_type in {None, "general"}:
+        if resource_id is not None:
+            raise HTTPException(422, "Une demande générale ne doit pas avoir d'identifiant de ressource")
+        return
+    if resource_id is None:
+        raise HTTPException(422, "Identifiant de ressource obligatoire")
+    if is_manager_role(user.get("role", "")):
+        return
+    queries = {
+        "report": "SELECT 1 FROM reports WHERE id=%s AND (user_id=%s OR agent_id=%s)",
+        "tour": "SELECT 1 FROM tours WHERE id=%s AND agent_id=%s",
+        "collection": "SELECT 1 FROM collection_occurrences o JOIN domestic_subscriptions s ON s.id=o.subscription_id WHERE o.id=%s AND (s.user_id=%s OR o.collector_id=%s)",
+        "subscription": "SELECT 1 FROM domestic_subscriptions WHERE id=%s AND user_id=%s",
+        "conversation": "SELECT 1 FROM conversation_participants WHERE conversation_id=%s AND user_id=%s",
+    }
+    query = queries[resource_type]
+    params = (resource_id, user["user_id"], user["user_id"]) if resource_type in {"report", "collection"} else (resource_id, user["user_id"])
+    cur.execute(query, params)
+    if not cur.fetchone():
+        raise HTTPException(403, "Accès refusé à cette ressource")
+
+
+def role_home(role: str) -> str:
+    return "gestionnaire" if is_manager_role(role) else role
+
+
 def notify_collection(conn, recipient_id: int, occurrence_id: int, event: str, title: str, content: str, **params):
     return create_notification(
         conn,
@@ -129,6 +168,12 @@ def create_domestic_subscription(
         ),
     )
     result = cur.fetchone()
+    create_notification(
+        conn, user["user_id"], "subscription_created", "Abonnement créé",
+        "Votre abonnement de collecte domestique a été créé.",
+        f"/citoyen#abonnement-{result[0]}", "notification.subscription_created",
+        {"subscription_id": result[0]}, resource_type="subscription", resource_id=result[0],
+    )
     conn.commit()
     cur.close()
     conn.close()
@@ -176,6 +221,14 @@ def update_my_subscription(
         (payload.status, subscription_id, user["user_id"]),
     )
     result = cur.fetchone()
+    if result:
+        create_notification(
+            conn, user["user_id"], "subscription_updated", "Abonnement mis à jour",
+            "Votre abonnement de collecte domestique a été mis à jour.",
+            f"/citoyen#abonnement-{result[0]}", "notification.subscription_updated",
+            {"subscription_id": result[0], "status": result[1]},
+            resource_type="subscription", resource_id=result[0],
+        )
     conn.commit()
     cur.close()
     conn.close()
@@ -191,21 +244,32 @@ def create_support_request(
 ):
     if payload.priority not in {"basse", "normal", "haute", "critique"}:
         raise HTTPException(400, "Priorité invalide")
+    if payload.category not in SUPPORT_CATEGORIES:
+        raise HTTPException(422, "Catégorie invalide")
+    if payload.resource_type and payload.resource_type not in RESOURCE_TYPES:
+        raise HTTPException(422, "Type de ressource invalide")
+    if payload.attachment_url:
+        raise HTTPException(422, "Les pièces jointes doivent utiliser le service d'upload sécurisé")
     conn = get_db_connection()
     cur = conn.cursor()
+    validate_support_resource(cur, payload.resource_type, payload.resource_id, user)
     cur.execute(
         """
         INSERT INTO support_requests
-            (author_id, author_role, category, subject, description, priority, attachment_url)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+            (author_id, author_role, category, subject, description, priority,
+             attachment_url, resource_type, resource_id, status)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'soumise')
         RETURNING id, status, created_at
         """,
         (
             user["user_id"], user["role"], payload.category, payload.subject,
-            payload.description, payload.priority, payload.attachment_url,
+            payload.description, payload.priority, None, payload.resource_type, payload.resource_id,
         ),
     )
     result = cur.fetchone()
+    cur.execute("SELECT id FROM users WHERE role IN ('gestionnaire','admin','municipal') AND active=TRUE")
+    for (recipient_id,) in cur.fetchall():
+        create_notification(conn, recipient_id, "support_received", "Nouvelle demande", f"Une demande « {payload.subject} » a été reçue.", "/gestionnaire#support", "notification.support_received", {"request_id": result[0], "subject": payload.subject}, resource_type="support", resource_id=result[0])
     conn.commit()
     cur.close()
     conn.close()
@@ -260,20 +324,23 @@ def list_my_support_requests(user: dict = Depends(current_user)):
 
 
 @router.get("/notifications")
-def list_notifications(user: dict = Depends(current_user)):
+def list_notifications(user: dict = Depends(current_user), limit: int = 20, offset: int = 0, unread: Optional[bool] = None):
+    if limit < 1 or limit > 100 or offset < 0:
+        raise HTTPException(422, "Pagination invalide")
     conn = get_db_connection()
     from psycopg2.extras import RealDictCursor
     cur = conn.cursor(cursor_factory=RealDictCursor)
     cur.execute(
         """
         SELECT id, notification_type, title, content, link,
-               translation_key, translation_params, is_read, created_at
+               translation_key, translation_params, is_read, read_at, resource_type,
+               resource_id, created_at
         FROM notifications
-        WHERE recipient_id = %s
-        ORDER BY created_at DESC
-        LIMIT 100
+        WHERE recipient_id = %s AND (%s IS NULL OR is_read = NOT %s)
+        ORDER BY created_at DESC, id DESC
+        LIMIT %s OFFSET %s
         """,
-        (user["user_id"],),
+        (user["user_id"], unread, unread, limit, offset),
     )
     rows = cur.fetchall()
     cur.close()
@@ -301,7 +368,7 @@ def mark_notification_read(notification_id: int, user: dict = Depends(current_us
     cur = conn.cursor()
     cur.execute(
         """
-        UPDATE notifications SET is_read = TRUE
+        UPDATE notifications SET is_read = TRUE, read_at = COALESCE(read_at, NOW())
         WHERE id = %s AND recipient_id = %s
         RETURNING id, is_read
         """,
@@ -321,7 +388,7 @@ def mark_all_notifications_read(user: dict = Depends(current_user)):
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute(
-        "UPDATE notifications SET is_read = TRUE WHERE recipient_id = %s AND is_read = FALSE",
+        "UPDATE notifications SET is_read = TRUE, read_at = NOW() WHERE recipient_id = %s AND is_read = FALSE",
         (user["user_id"],),
     )
     updated = cur.rowcount
@@ -360,9 +427,9 @@ def respond_to_support_request(
     cur.execute(
         """
         UPDATE support_requests
-        SET manager_response = %s, status = 'resolue', updated_at = NOW()
+        SET manager_response = %s, status = 'reponse_envoyee', updated_at = NOW()
         WHERE id = %s
-        RETURNING id, author_id, subject
+        RETURNING id, author_id, subject, author_role
         """,
         (payload.response, request_id),
     )
@@ -374,13 +441,30 @@ def respond_to_support_request(
     create_notification(
         conn, result[1], "support_response", "Réponse à votre réclamation",
         f"Une réponse a été apportée à « {result[2]} ».",
-        f"/ramasseur#reclamation-{result[0]}", "notification.support_response",
-        {"request_id": result[0], "subject": result[2]},
+        f"/{role_home(result[3])}#support-{result[0]}", "notification.support_response",
+        {"request_id": result[0], "subject": result[2]}, resource_type="support", resource_id=result[0],
     )
     conn.commit()
     cur.close()
     conn.close()
-    return {"id": result[0], "status": "resolue"}
+    return {"id": result[0], "status": "reponse_envoyee"}
+
+
+@router.patch("/gestionnaire/demandes-support/{request_id}/status")
+def update_support_status(request_id: int, payload: SupportStatusUpdate, user: dict = Depends(require_manager)):
+    if payload.status not in SUPPORT_STATUSES:
+        raise HTTPException(422, "Statut de support invalide")
+    conn = get_db_connection(); cur = conn.cursor()
+    cur.execute("SELECT status FROM support_requests WHERE id=%s FOR UPDATE", (request_id,))
+    previous = cur.fetchone()
+    if not previous:
+        cur.close(); conn.close(); raise HTTPException(404, "Demande non trouvée")
+    cur.execute("UPDATE support_requests SET status=%s, updated_at=NOW(), closed_at=CASE WHEN %s='cloturee' THEN NOW() ELSE NULL END WHERE id=%s RETURNING author_id,author_role,subject", (payload.status, payload.status, request_id))
+    author_id, author_role, subject = cur.fetchone()
+    cur.execute("INSERT INTO audit_logs(actor_id,actor_role,action,resource_type,resource_id,old_value,new_value) VALUES (%s,%s,'support_status_changed','support',%s,%s,%s)", (user["user_id"], user["role"], request_id, Json({"status": previous[0]}), Json({"status": payload.status})))
+    create_notification(conn, author_id, "support_status_changed", "Demande mise à jour", f"Le statut de « {subject} » a changé.", f"/{role_home(author_role)}#support-{request_id}", "notification.support_status_changed", {"request_id": request_id, "status": payload.status}, resource_type="support", resource_id=request_id)
+    conn.commit(); cur.close(); conn.close()
+    return {"id": request_id, "status": payload.status}
 
 
 @router.get("/gestionnaire/plans")

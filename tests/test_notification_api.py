@@ -38,7 +38,7 @@ def test_notification_list_contract_and_recipient_filter(monkeypatch):
     assert workflows.list_notifications({"user_id": 12}) == [row]
     query, params = cursor.executed
     assert "translation_key" in query and "translation_params" in query
-    assert params == (12,)
+    assert params == (12, None, None, 20, 0)
 
 
 def test_individual_read_is_scoped_to_recipient(monkeypatch):

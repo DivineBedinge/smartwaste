@@ -1,0 +1,1 @@
+-- Intentionally non-destructive. Communication data must be archived by policy before removal.

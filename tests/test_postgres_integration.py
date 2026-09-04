@@ -50,6 +50,21 @@ def test_notification_jsonb_round_trip_uses_psycopg_adapter(pg_connection):
         assert cursor.fetchone()[0] == payload
 
 
+def test_communication_constraints_and_notification_idempotency(pg_connection):
+    with pg_connection.cursor() as cursor:
+        cursor.execute("INSERT INTO users(email,password_hash,role) VALUES (%s,'x','citoyen') RETURNING id", (f"comms-{uuid4()}@example.test",))
+        user_id = cursor.fetchone()[0]
+        key = str(uuid4())
+        cursor.execute("INSERT INTO notifications(recipient_id,notification_type,title,content,idempotency_key) VALUES (%s,'test','t','c',%s) ON CONFLICT (recipient_id,idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING", (user_id, key))
+        cursor.execute("INSERT INTO notifications(recipient_id,notification_type,title,content,idempotency_key) VALUES (%s,'test','t','c',%s) ON CONFLICT (recipient_id,idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING", (user_id, key))
+        cursor.execute("SELECT COUNT(*) FROM notifications WHERE recipient_id=%s AND idempotency_key=%s", (user_id, key))
+        assert cursor.fetchone()[0] == 1
+        cursor.execute("SAVEPOINT callback_constraint")
+        with pytest.raises(psycopg2.errors.CheckViolation):
+            cursor.execute("INSERT INTO callback_requests(requester_id,resource_type,reason) VALUES (%s,'report','test')", (user_id,))
+        cursor.execute("ROLLBACK TO SAVEPOINT callback_constraint")
+
+
 def test_constraints_foreign_keys_and_idempotency_index_exist(pg_connection):
     with pg_connection.cursor() as cursor:
         cursor.execute("SELECT contype, pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid='reports'::regclass")
@@ -66,7 +81,8 @@ def test_migration_history_has_ordered_checksums(pg_connection):
         cursor.execute("SELECT filename, checksum FROM schema_migrations ORDER BY filename")
         rows = cursor.fetchall()
         assert [row[0] for row in rows] == [
-            "001_workflows.sql", "002_collector_operations.sql", "003_collection_cancellation.sql"
+            "001_workflows.sql", "002_collector_operations.sql", "003_collection_cancellation.sql",
+            "004_communications.sql",
         ]
         assert all(len(row[1]) == 64 for row in rows)
 
