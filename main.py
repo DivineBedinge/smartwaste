@@ -44,6 +44,7 @@ from app.router import chatbot_cache_key, detect_simple_intent, is_faq_question,
 from route_optimizer import get_graph, calculer_matrice_distances, resoudre_vrp
 from app.routers.workflows import router as workflows_router
 from app.routers.communications import router as communications_router
+from app.routers.media import router as media_router
 from app.services.uploads import read_validated_image
 from app.services.routing import get_route
 from app.services.notifications import (
@@ -52,6 +53,8 @@ from app.services.notifications import (
     pending_notification_events,
     record_notification_failure,
 )
+from app.services.media_assets import store_media_with_compensation
+from app.services.media_storage import get_media_storage
 from app.services.gps_tracking import PositionRateLimiter
 from app.services.ai_runtime import get_onnx_session, heavy_ai_disabled, runtime_status
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -146,6 +149,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 app.include_router(auth_router)
 app.include_router(workflows_router)
 app.include_router(communications_router)
+app.include_router(media_router)
 
 # Sécurité
 security = HTTPBearer()
@@ -650,7 +654,6 @@ async def create_signalement(
     except ValueError as exc:
         raise HTTPException(422, "client_id doit être un UUID valide") from exc
     image_bytes = await read_validated_image(file)
-    photo_base64 = base64.b64encode(image_bytes).decode('utf-8')
 
     try:
         severity, confidence = predict_severity(image_bytes)
@@ -698,19 +701,25 @@ async def create_signalement(
 
     # INSERT avec user_id
     cur.execute("""
-        INSERT INTO reports (user_id, geometry, severity, confidence, status, photo_base64, waste_type,
+        INSERT INTO reports (user_id, geometry, severity, confidence, status, waste_type,
                      is_primary, report_count, duplicate_group_id,
                      classification_source, classification_model_version, analyzed_at,
                                          human_review_required, initial_severity, final_severity, client_id, description, address_text)
-        VALUES (%s, ST_SetSRID(ST_MakePoint(%s, %s), 4326), %s, %s, %s, %s, %s,
+        VALUES (%s, ST_SetSRID(ST_MakePoint(%s, %s), 4326), %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, NOW(), %s, %s, %s, %s, %s, %s)
         RETURNING id
-        """, (current_user["user_id"], lon, lat, severity, confidence, status, photo_base64, type_dechet,
+        """, (current_user["user_id"], lon, lat, severity, confidence, status, type_dechet,
           is_primary, report_count, duplicate_group_id, severity_decision.source, MODEL_VERSION,
           severity_decision.human_review_required, severity_decision.predicted_class,
                     None if severity_decision.human_review_required else severity_decision.predicted_class,
                       client_id, description, address_text))
     report_id = cur.fetchone()[0]
+    storage = get_media_storage()
+    asset_id, _stored = store_media_with_compensation(
+        conn,current_user["user_id"],"report_initial",image_bytes,file.content_type,
+        "report",report_id,"active",storage,
+    )
+    cur.execute("UPDATE reports SET initial_media_asset_id=%s WHERE id=%s",(asset_id,report_id))
 
     if is_primary:
         cur.execute("""
@@ -1012,7 +1021,6 @@ async def soumettre_preuve_traitement(
 
     validate_coordinates(lat, lon)
     image_bytes = await read_validated_image(file)
-    photo_preuve_base64 = base64.b64encode(image_bytes).decode('utf-8')
 
     severity, confiance = predict_severity(image_bytes)
 
@@ -1026,12 +1034,17 @@ async def soumettre_preuve_traitement(
         message = "Déchets encore présents selon l'IA. Vérification requise."
 
     cur.execute("""
-        UPDATE reports SET status = %s, photo_preuve_base64 = %s,
+        UPDATE reports SET status = %s,
                resultat_preuve = %s, confiance_preuve = %s,
                date_traitement = NOW(), updated_at = NOW()
         WHERE id = %s RETURNING id, status
-    """, (nouveau_statut, photo_preuve_base64, resultat, confiance, report_id))
+    """, (nouveau_statut, resultat, confiance, report_id))
     result = cur.fetchone()
+    asset_id, _stored = store_media_with_compensation(
+        conn,user["user_id"],"report_proof",image_bytes,file.content_type,
+        "report",report_id,"active",get_media_storage(),
+    )
+    cur.execute("UPDATE reports SET proof_media_asset_id=%s WHERE id=%s",(asset_id,report_id))
     create_notification(
         conn, report["user_id"], "report_proof_result", "Preuve de traitement",
         "La preuve de traitement de votre signalement a été analysée.",

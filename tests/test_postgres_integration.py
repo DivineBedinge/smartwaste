@@ -103,6 +103,7 @@ def test_migration_history_has_ordered_checksums(pg_connection):
             "001_workflows.sql", "002_collector_operations.sql", "003_collection_cancellation.sql",
             "004_communications.sql",
             "005_notification_outbox.sql",
+            "006_private_media.sql",
         ]
         assert all(len(row[1]) == 64 for row in rows)
 

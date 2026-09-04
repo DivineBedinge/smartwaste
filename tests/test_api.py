@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 import auth
 import main
-from app.routers import communications, workflows
+from app.routers import communications, media, workflows
 from core.security import create_access_token, hash_password
 from database import require_test_database_url
 
@@ -23,17 +23,19 @@ class TransactionConnection:
 
 
 @pytest.fixture
-def api(monkeypatch):
+def api(monkeypatch, tmp_path):
     try:
         url = require_test_database_url(os.getenv("TEST_DATABASE_URL"))
     except RuntimeError as error:
         pytest.skip(str(error))
     connection = psycopg2.connect(url)
+    monkeypatch.setenv("MEDIA_STORAGE_PATH", str(tmp_path / "private-media"))
     connection.autocommit = False
     wrapped = TransactionConnection(connection)
     monkeypatch.setattr(main, "get_db_connection", lambda: wrapped)
     monkeypatch.setattr(auth, "get_db_connection", lambda: wrapped)
     monkeypatch.setattr(communications, "get_db_connection", lambda: wrapped)
+    monkeypatch.setattr(media, "get_db_connection", lambda: wrapped)
     monkeypatch.setattr(workflows, "get_db_connection", lambda: wrapped)
     monkeypatch.setattr(main, "predict_severity", lambda _: ("faible", 0.99))
     monkeypatch.setattr(main, "predict_type", lambda _: ("plastic", 0.98))
@@ -87,6 +89,9 @@ def test_create_report_is_idempotent_without_ai_or_network(api):
     assert second.status_code == 200
     assert second.json()["id"] == first.json()["id"]
     assert second.json()["duplicate"] is True
+    media = client.get(f"/api/v1/media/legacy/report/{first.json()['id']}/initial", headers=bearer(users["citoyen"]))
+    assert media.status_code == 200
+    assert media.headers["cache-control"] == "private, no-store"
 
 
 def test_citizen_cannot_access_manager_reports(api):

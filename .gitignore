@@ -13,6 +13,7 @@ __pycache__/
 # Local caches and downloaded/generated data
 cache/
 images_copernicus/
+var/private_media/
 models/multilingual-e5-small/model.safetensors
 
 # Model weights are kept locally and downloaded separately

@@ -1,0 +1,1 @@
+-- Réversion non destructive : conserver les médias et métadonnées métier.

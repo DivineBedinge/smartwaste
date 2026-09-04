@@ -1,4 +1,3 @@
-import base64
 import os
 import re
 from datetime import datetime
@@ -11,6 +10,8 @@ from pydantic import BaseModel, Field
 from psycopg2.extras import Json, RealDictCursor
 
 from app.services.notifications import create_notification
+from app.services.media_assets import store_media_with_compensation
+from app.services.media_storage import get_media_storage
 from app.services.uploads import read_validated_image
 from core.policy import is_manager_role
 from core.security import decode_token
@@ -124,7 +125,7 @@ def list_messages(conversation_id:int,limit:int=30,offset:int=0,user=Depends(cur
     if limit<1 or limit>100 or offset<0: raise HTTPException(422,"Pagination invalide")
     conn=get_db_connection(); cur=conn.cursor(cursor_factory=RealDictCursor); require_participant(cur,conversation_id,user["user_id"])
     cur.execute("""SELECT m.id,m.sender_id,m.client_id,m.message_type,m.body,m.attachment_mime,
-        (m.attachment_base64 IS NOT NULL) AS has_attachment,m.created_at,u.role AS sender_role
+        (m.media_asset_id IS NOT NULL OR m.attachment_base64 IS NOT NULL) AS has_attachment,m.created_at,u.role AS sender_role
         FROM messages m LEFT JOIN users u ON u.id=m.sender_id WHERE m.conversation_id=%s
         ORDER BY m.created_at DESC,m.id DESC LIMIT %s OFFSET %s""",(conversation_id,limit,offset)); rows=cur.fetchall(); cur.close(); conn.close(); return rows
 
@@ -132,10 +133,15 @@ def list_messages(conversation_id:int,limit:int=30,offset:int=0,user=Depends(cur
 @router.get("/messages/{message_id}/attachment")
 def get_message_attachment(message_id:int,user=Depends(current_user)):
     conn=get_db_connection(); cur=conn.cursor()
-    cur.execute("SELECT conversation_id,attachment_base64,attachment_mime FROM messages WHERE id=%s",(message_id,)); row=cur.fetchone()
-    if not row or not row[1]: cur.close(); conn.close(); raise HTTPException(404,"Pièce jointe non trouvée")
+    cur.execute("SELECT conversation_id,media_asset_id,attachment_base64,attachment_mime FROM messages WHERE id=%s",(message_id,)); row=cur.fetchone()
+    if not row or (not row[1] and not row[2]): cur.close(); conn.close(); raise HTTPException(404,"Pièce jointe non trouvée")
     require_participant(cur,row[0],user["user_id"])
-    content=base64.b64decode(row[1],validate=True); mime=row[2]
+    if row[1]:
+        cur.close(); conn.close()
+        from app.routers.media import read_private_media
+        return read_private_media(str(row[1]),user)
+    import base64
+    content=base64.b64decode(row[2],validate=True); mime=row[3]
     if mime not in {"image/jpeg","image/png","image/webp"}: cur.close(); conn.close(); raise HTTPException(415,"Type de pièce jointe invalide")
     cur.close(); conn.close(); return Response(content=content,media_type=mime,headers={"Cache-Control":"private, no-store","X-Content-Type-Options":"nosniff"})
 
@@ -146,14 +152,19 @@ async def send_message(conversation_id:int,client_id:str=Form(...),body:Optional
     except ValueError as exc: raise HTTPException(422,"client_id invalide") from exc
     text=(body or "").strip()
     if len(text)>5000 or (not text and not file): raise HTTPException(422,"Message vide ou trop long")
-    attachment=None; mime=None
+    content=None; mime=None
     if file:
-        content=await read_validated_image(file); attachment=base64.b64encode(content).decode("ascii"); mime=file.content_type
+        content=await read_validated_image(file); mime=file.content_type
     conn=get_db_connection(); cur=conn.cursor(); conversation=require_participant(cur,conversation_id,user["user_id"],lock=True)
     if conversation[0]!="open": cur.close(); conn.close(); raise HTTPException(409,"Conversation clôturée")
+    cur.execute("SELECT id,created_at FROM messages WHERE conversation_id=%s AND client_id=%s",(conversation_id,str(client_uuid))); existing=cur.fetchone()
+    if existing: cur.close();conn.close();return {"id":existing[0],"client_id":client_id,"status":"sent","created_at":existing[1]}
     cur.execute("SELECT COUNT(*) FROM messages WHERE conversation_id=%s AND sender_id=%s AND created_at>NOW()-INTERVAL '1 minute'",(conversation_id,user["user_id"]))
     if cur.fetchone()[0]>=30: cur.close(); conn.close(); raise HTTPException(429,"Trop de messages")
-    cur.execute("INSERT INTO messages(conversation_id,sender_id,client_id,message_type,body,attachment_base64,attachment_mime) VALUES (%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(conversation_id,client_id) DO UPDATE SET client_id=EXCLUDED.client_id RETURNING id,created_at",(conversation_id,user["user_id"],str(client_uuid),"image" if attachment else "text",text or None,attachment,mime)); message_id,created_at=cur.fetchone()
+    asset_id=None
+    if content:
+        asset_id,_stored=store_media_with_compensation(conn,user["user_id"],"message_attachment",content,mime,"conversation",conversation_id,"active",get_media_storage())
+    cur.execute("INSERT INTO messages(conversation_id,sender_id,client_id,message_type,body,media_asset_id,attachment_mime) VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id,created_at",(conversation_id,user["user_id"],str(client_uuid),"image" if asset_id else "text",text or None,asset_id,mime)); message_id,created_at=cur.fetchone()
     cur.execute("SELECT user_id FROM conversation_participants WHERE conversation_id=%s AND user_id<>%s",(conversation_id,user["user_id"]))
     for (recipient,) in cur.fetchall():
         create_notification(conn,recipient,"new_message","Nouveau message","Un nouveau message contextuel est disponible.",None,"notification.new_message",{"conversation_id":conversation_id},resource_type="conversation",resource_id=conversation_id,idempotency_key=client_uuid)
