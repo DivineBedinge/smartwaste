@@ -215,6 +215,8 @@ def citizen_collection_progress(occurrence_id:int,user=Depends(current_user)):
 
 @router.post("/assistant")
 def geographic_assistant(payload:AssistantRequest,user=Depends(current_user)):
+    if os.getenv("CHATBOT_ENABLED", "true").lower() != "true":
+        raise HTTPException(503, "Assistant temporairement indisponible")
     try:intent=identify_intent(payload.query,user["role"],payload.intent)
     except LookupError as exc:return response(user.get("language","fr"),str(exc),"Please clarify your geographic request.",needs_clarification=True)
     except ValueError as exc:raise HTTPException(422,str(exc)) from exc

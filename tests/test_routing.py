@@ -1,6 +1,8 @@
 from unittest.mock import Mock, patch
 
-from app.services.routing import get_route
+import pytest
+
+from app.services.routing import OSRMRoutingProvider, RoutingUnavailable, get_route
 
 
 @patch.dict("os.environ", {"ROUTING_PROVIDER": "osrm"})
@@ -24,3 +26,16 @@ def test_osrm_failure_returns_unavailable(mock_get):
 def test_disabled_provider_never_fabricates_a_route(monkeypatch):
     monkeypatch.setenv("ROUTING_PROVIDER", "disabled")
     assert get_route([(4.0,9.0),(4.1,9.1)]) is None
+
+
+@patch.dict("os.environ", {"ROUTING_FAILURE_THRESHOLD": "2", "ROUTING_FAILURE_COOLDOWN_SECONDS": "60"})
+@patch("app.services.routing.requests.get", side_effect=TimeoutError)
+def test_osrm_circuit_breaker_opens_after_repeated_failures(mock_get):
+    provider = OSRMRoutingProvider("https://router.example.test", 1)
+    for _ in range(2):
+        with pytest.raises(RoutingUnavailable):
+            provider.route([(4.0, 9.0), (4.1, 9.1)])
+    assert provider.health() == "temporarily_unavailable"
+    with pytest.raises(RoutingUnavailable):
+        provider.route([(4.0, 9.0), (4.1, 9.1)])
+    assert mock_get.call_count == 2

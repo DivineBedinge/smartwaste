@@ -1,6 +1,6 @@
-const CACHE_NAME = 'smartwaste-v5';
+const CACHE_NAME = 'smartwaste-v6';
 const CACHE_PREFIX = 'smartwaste-';
-const STATIC_URLS = ['/', '/citoyen', '/static/citoyen.html', '/static/offline.js', '/static/i18n.js', '/static/map-common.js', '/static/ui-shell.js', '/static/smartwaste.css', '/static/mascot-recycleur.svg', '/static/manifest.webmanifest'];
+const STATIC_URLS = ['/', '/citoyen', '/static/citoyen.html', '/static/offline.js', '/static/i18n.js', '/static/map-common.js', '/static/ui-shell.js', '/static/smartwaste.css', '/static/mascot-recycleur.svg', '/static/icon-192.png', '/static/icon-512.png', '/static/icon-maskable-512.png', '/static/manifest.webmanifest'];
 
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(STATIC_URLS)));
@@ -12,6 +12,12 @@ self.addEventListener('activate', event => {
     keys.filter(key => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME).map(key => caches.delete(key))
   )));
   self.clients.claim();
+});
+
+self.addEventListener('message', event => {
+  if (event.data?.type === 'PURGE_PRIVATE') {
+    event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(key => key.startsWith('smartwaste-private-')).map(key => caches.delete(key)))));
+  }
 });
 
 self.addEventListener('fetch', event => {

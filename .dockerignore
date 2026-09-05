@@ -1,0 +1,14 @@
+.git
+.env
+.env.*
+!.env.example
+venv
+env
+ragas_env
+node_modules
+__pycache__
+.pytest_cache
+var/private_media
+models
+*.onnx
+*.h5

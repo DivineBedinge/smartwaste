@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
@@ -50,9 +51,23 @@ class OSRMRoutingProvider(RoutingProvider):
             raise ValueError("URL OSRM non autorisée")
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = max(0.1, min(timeout_seconds, 30.0))
+        self.failure_count = 0
+        self.open_until = 0.0
+
+    def health(self) -> str:
+        return "temporarily_unavailable" if time.monotonic() < self.open_until else "available"
+
+    def _record_failure(self) -> None:
+        self.failure_count += 1
+        threshold = max(1, int(os.getenv("ROUTING_FAILURE_THRESHOLD", "3")))
+        if self.failure_count >= threshold:
+            cooldown = max(1.0, float(os.getenv("ROUTING_FAILURE_COOLDOWN_SECONDS", "30")))
+            self.open_until = time.monotonic() + cooldown
 
     def route(self, coordinates: list[tuple[float, float]]) -> RouteResult:
         _validate_coordinates(coordinates)
+        if self.health() != "available":
+            raise RoutingUnavailable("Itinéraire indisponible")
         encoded = ";".join(f"{longitude},{latitude}" for latitude, longitude in coordinates)
         try:
             response = requests.get(f"{self.base_url}/route/v1/driving/{encoded}", params={"overview":"full","geometries":"geojson"}, timeout=self.timeout_seconds)
@@ -67,8 +82,11 @@ class OSRMRoutingProvider(RoutingProvider):
                 raise RoutingUnavailable("Géométrie de routage invalide")
             if not isinstance(distance,(int,float)) or not isinstance(duration,(int,float)) or distance < 0 or duration < 0:
                 raise RoutingUnavailable("Métriques de routage invalides")
+            self.failure_count = 0
+            self.open_until = 0.0
             return RouteResult(geometry,float(distance),float(duration),self.name)
-        except (requests.RequestException,ValueError,TypeError,KeyError,TimeoutError) as exc:
+        except (requests.RequestException,ValueError,TypeError,KeyError,TimeoutError,RoutingUnavailable) as exc:
+            self._record_failure()
             raise RoutingUnavailable("Itinéraire indisponible") from exc
 
 

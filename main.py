@@ -58,6 +58,8 @@ from app.services.media_assets import store_media_with_compensation
 from app.services.media_storage import get_media_storage
 from app.services.gps_tracking import PositionRateLimiter
 from app.services.ai_runtime import get_onnx_session, heavy_ai_disabled, runtime_status
+from app.services.observability import security_observability_middleware
+from core.runtime_config import load_runtime_config
 from fastapi import APIRouter, Depends, HTTPException, status
 
 
@@ -112,10 +114,11 @@ class TourneeCreate(BaseModel):
     date_planifiee: str = None
 
 load_dotenv()
+RUNTIME_CONFIG = load_runtime_config()
 DATABASE_URL = os.getenv("DATABASE_URL")
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", "10485760"))
 GPS_UPDATE_INTERVAL_SECONDS = float(os.getenv("GPS_UPDATE_INTERVAL_SECONDS", "10"))
-CORS_ORIGINS = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "http://localhost:8000").split(",") if origin.strip()]
+CORS_ORIGINS = list(RUNTIME_CONFIG.cors_origins)
 gps_rate_limiter = PositionRateLimiter(GPS_UPDATE_INTERVAL_SECONDS)
 
 # ========== MODÈLE 4 CLASSES (SÉVÉRITÉ) – pour signalements ==========
@@ -135,14 +138,15 @@ MODEL_BINARY_PATH = os.getenv("MODEL_BINARY_PATH", "./modele_2classes.onnx")
 CLASS_NAMES_BINARY = ["organique", "recyclable"]
 
 app = FastAPI(title="SmartWaste CM+ API", version="0.1.0")
+app.middleware("http")(security_observability_middleware)
 
 # CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
     allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
 )
 
 # Dossier statique
@@ -513,14 +517,27 @@ def root():
 
 @app.get("/health")
 def health():
+    return {"status": "ok", "version": app.version}
+
+
+@app.get("/health/live")
+def liveness():
+    return {"status": "alive"}
+
+
+@app.get("/health/ready")
+def readiness():
     database_status = "unavailable"
+    postgis_status = "unavailable"
     conn = None
     cur = None
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("SELECT 1")
-        database_status = "available" if cur.fetchone() else "unavailable"
+        cur.execute("SELECT current_database(), PostGIS_Version(), (SELECT COUNT(*) FROM schema_migrations)")
+        row = cur.fetchone()
+        database_status = "available" if row else "unavailable"
+        postgis_status = "available" if row and row[1] else "unavailable"
     except Exception:
         pass
     finally:
@@ -528,7 +545,8 @@ def health():
             cur.close()
         if conn is not None:
             conn.close()
-    return {"api": "operational", "database": database_status, **runtime_status()}
+    ready = database_status == "available" and postgis_status == "available"
+    return JSONResponse({"status": "ready" if ready else "degraded", "database": database_status, "postgis": postgis_status, "routing": "configured" if os.getenv("ROUTING_PROVIDER", "disabled") != "disabled" else "disabled", "version": app.version}, status_code=200 if ready else 503)
 
 @app.get("/dashboard")
 def dashboard():
@@ -562,6 +580,10 @@ def ramasseur():
 # ========== WEBSOCKET ==========
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    origin = websocket.headers.get("origin")
+    if origin and origin.rstrip("/") not in RUNTIME_CONFIG.websocket_origins:
+        await websocket.close(code=1008)
+        return
     protocols = [value.strip() for value in websocket.headers.get("sec-websocket-protocol", "").split(",")]
     token = protocols[1] if len(protocols) == 2 and protocols[0].lower() == "bearer" else None
     user = decode_token(token) if token else None

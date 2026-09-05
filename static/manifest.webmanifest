@@ -11,6 +11,9 @@
   "theme_color": "#059669",
   "categories": ["utilities", "navigation"],
   "icons": [
-    {"src":"/static/mascot-recycleur.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}
+    {"src":"/static/icon-192.png","sizes":"192x192","type":"image/png","purpose":"any"},
+    {"src":"/static/icon-512.png","sizes":"512x512","type":"image/png","purpose":"any"},
+    {"src":"/static/icon-maskable-512.png","sizes":"512x512","type":"image/png","purpose":"maskable"},
+    {"src":"/static/mascot-recycleur.svg","sizes":"any","type":"image/svg+xml","purpose":"any"}
   ]
 }

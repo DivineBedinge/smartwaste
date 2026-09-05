@@ -55,7 +55,7 @@ def test_mascot_and_assistant_are_local_and_controlled():
 def test_manifest_and_service_worker_cache_pwa_assets():
     manifest = json.loads((STATIC / "manifest.webmanifest").read_text(encoding="utf-8"))
     assert manifest["display"] == "standalone"
-    assert manifest["icons"][0]["purpose"] == "any maskable"
+    assert any(icon["purpose"] == "maskable" for icon in manifest["icons"])
     worker = (STATIC / "sw.js").read_text(encoding="utf-8")
     for asset in ("ui-shell.js", "smartwaste.css", "mascot-recycleur.svg"):
         assert asset in worker
