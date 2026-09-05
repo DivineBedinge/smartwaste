@@ -1,0 +1,35 @@
+{
+  "date": "2026-09-05",
+  "environment": "APP_ENV=test; smartwaste_test; host port 55433",
+  "pytest": {
+    "passed": 173,
+    "failed": 0,
+    "skipped": 0,
+    "warnings": 23,
+    "seconds": 43.97
+  },
+  "node": {
+    "build_css": "passed",
+    "build_icons": "passed",
+    "check_js": "passed",
+    "inline_scripts_checked": 8,
+    "dom_payloads_checked": 4,
+    "npm_audit_vulnerabilities": 0
+  },
+  "docker": {
+    "build": "passed",
+    "runtime_uid": 999,
+    "liveness": "alive",
+    "readiness": "ready",
+    "postgresql": "available",
+    "postgis": "available"
+  },
+  "ai": {
+    "mode_local": "partial",
+    "onnx_sessions": "loaded",
+    "pgvector": false,
+    "indexed_documents": 0,
+    "generator_configured": false,
+    "classifier_metrics": "not_executed_without_labeled_dataset"
+  }
+}

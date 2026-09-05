@@ -1,0 +1,14 @@
+{
+  "database": "smartwaste_test",
+  "postgis": "3.4 USE_GEOS=1 USE_PROJ=1 USE_STATS=1",
+  "database_bytes": 23806755,
+  "reports": 1,
+  "users": 4,
+  "page_limit": 50,
+  "page_rows": 1,
+  "page_query_ms": 5.503,
+  "geo_radius_m": 10000,
+  "geo_matches": 1,
+  "geo_query_ms": 110.545,
+  "warning": "Mesure locale synthetique; aucune extrapolation industrielle"
+}
