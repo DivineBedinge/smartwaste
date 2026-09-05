@@ -1,11 +1,9 @@
-"""Commande planifiable mono-instance pour les automatisations SmartWaste."""
-from app.services.automation import run_daily_automation
-from database import get_db_connection
+"""Point d'entree historique : unique par defaut, worker avec --worker."""
+import sys
+
+from automation_worker import main
 
 
 if __name__ == "__main__":
-    connection = get_db_connection()
-    try:
-        print(run_daily_automation(connection))
-    finally:
-        connection.close()
+    arguments = [] if "--worker" in sys.argv[1:] else ["--once"]
+    raise SystemExit(main(arguments))

@@ -31,7 +31,7 @@ services:
     restart: unless-stopped
   automation:
     build: .
-    command: ["python", "run_automation.py"]
+    command: ["python", "run_automation.py", "--worker"]
     environment:
       APP_ENV: demo
       DATABASE_URL: postgresql://smartwaste:${POSTGRES_PASSWORD}@postgres:5432/smartwaste_demo
@@ -41,11 +41,12 @@ services:
       CORS_ORIGINS: ${PUBLIC_ORIGIN:?required}
       WEBSOCKET_ORIGINS: ${PUBLIC_ORIGIN:?required}
       SMARTWASTE_DISABLE_AI: "true"
+      AUTOMATION_INTERVAL_SECONDS: ${AUTOMATION_INTERVAL_SECONDS:-300}
     volumes: [private_media:/app/var/private_media]
     networks: [internal]
     depends_on:
       postgres: {condition: service_healthy}
-    restart: "no"
+    restart: unless-stopped
   proxy:
     image: nginx:1.27-alpine
     volumes: [./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro]
